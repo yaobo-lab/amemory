@@ -1,0 +1,4 @@
+interface:
+    display_name: "嵌入式 C 代码质量与架构"
+    short_description: "落实一方 C 代码质量、接口契约与单向分层"
+    default_prompt: "使用 $embedded-layer-architecture 实现或审查本次一方 C/CMake 修改：先判断职责和依赖方向，再检查命名格式、公共接口、错误与回调契约、LVGL/UI 线程、宏日志、平台文件和构建目标，并运行针对修改范围的验证。"

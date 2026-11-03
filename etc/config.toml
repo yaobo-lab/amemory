@@ -1,0 +1,32 @@
+[server]
+# stdio 或 http。HTTP 是默认部署方式，可直接在控制台看到监听端口。
+transport = "http"
+# HTTP 模式只允许回环地址；远程访问请通过 HTTPS 反向代理。
+listen = "127.0.0.1:3000"
+# true 时只同步 Skill 和电子书，然后退出，不启动 MCP Server。
+sync_skills_only = false
+
+[storage]
+# 路径相对于启动进程的工作目录。
+memory = "memvid.mv2"
+skills = "skills"
+books = "books"
+
+[logger]
+# 1=error, 2=warn, 3=info, 4=debug, 5=trace。
+level = 3
+# 单个日志文件达到该大小后轮转。
+size_mb = 2
+# HTTP 模式可输出到控制台；stdio 模式必须设为 false。
+console = true
+dir = "logs"
+keep_file_count = 5
+# toolkit-rs 会把这些第三方模块限制为 WARN。
+filters = ["tantivy", "memvid_core", "rmcp", "tokio", "hyper", "h2"]
+log_name = "memvid-mcp"
+style = "Module"
+cleanup_sync = false
+
+[panic]
+# panic 记录到 panic.log 后退出进程。
+exit = true
