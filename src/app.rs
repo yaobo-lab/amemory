@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, sync::Arc};
+use std::{net::SocketAddr, path::Path, sync::Arc};
 
 use log::{error, info, warn};
 use memvid_core::Memvid;
@@ -8,15 +8,31 @@ use rmcp::{
         StreamableHttpServerConfig, StreamableHttpService, session::never::NeverSessionManager,
     },
 };
+use tower_http::limit::RequestBodyLimitLayer;
 
 use crate::{
     books::{BookCatalog, sync_to_memvid as sync_books_to_memvid},
     config::{AppConfig, TransportMode},
+    embedding,
     service::MemvidService,
     skills::{SkillCatalog, sync_to_memvid as sync_skills_to_memvid},
 };
 
 const HTTP_PATH: &str = "/mcp";
+const HTTP_JSON_OVERHEAD_BYTES: usize = 1024 * 1024;
+
+fn reopen_memvid(memory: Memvid, path: &Path) -> eyre::Result<Memvid> {
+    drop(memory);
+    Ok(Memvid::open(path)?)
+}
+
+const fn http_body_limit(max_file_bytes: usize) -> usize {
+    max_file_bytes
+        .saturating_add(2)
+        .saturating_div(3)
+        .saturating_mul(4)
+        .saturating_add(HTTP_JSON_OVERHEAD_BYTES)
+}
 
 /// 同步 Skill 与电子书，必要时通过配置的传输方式处理 MCP 请求。
 ///
@@ -41,16 +57,25 @@ pub async fn run(config: AppConfig) -> eyre::Result<()> {
         skill_report.deleted_parts
     );
 
-    let book_catalog = BookCatalog::scan(&config.storage.books)?;
-    let book_report = sync_books_to_memvid(&mut memvid, &book_catalog)?;
+    memvid = reopen_memvid(memvid, &config.storage.memory)?;
+    let embedder = embedding::create(&config.embedding)?;
+    let book_catalog =
+        BookCatalog::scan(&config.storage.books, config.document_import.max_file_bytes)?;
+    let book_report = sync_books_to_memvid(&mut memvid, &book_catalog, embedder.as_deref())?;
     info!(
-        "books loaded: memory={}, books={}, loaded_books={}, written_parts={}, unchanged_parts={}, deleted_parts={}",
+        "books loaded: memory={}, books={}, loaded_books={}, written_parts={}, unchanged_parts={}, deleted_parts={}, written_documents={}, unchanged_documents={}, deleted_documents={}, embedding_provider={}",
         config.storage.memory.display(),
         config.storage.books.display(),
         book_report.book_count,
         book_report.written_parts,
         book_report.unchanged_parts,
-        book_report.deleted_parts
+        book_report.deleted_parts,
+        book_report.written_documents,
+        book_report.unchanged_documents,
+        book_report.deleted_documents,
+        embedder
+            .as_deref()
+            .map_or("none", memvid_core::EmbeddingProvider::kind)
     );
 
     match memvid.stats() {
@@ -87,7 +112,16 @@ pub async fn run(config: AppConfig) -> eyre::Result<()> {
         return Ok(());
     }
 
-    let service = MemvidService::new(memvid, skill_catalog, book_catalog);
+    memvid = reopen_memvid(memvid, &config.storage.memory)?;
+    let http_body_limit = http_body_limit(config.document_import.max_file_bytes);
+    let service = MemvidService::new(
+        memvid,
+        config.storage.memory.clone(),
+        skill_catalog,
+        book_catalog,
+        config.document_import,
+        embedder,
+    );
     match config.server.transport {
         TransportMode::Stdio => {
             serve_stdio(service, skill_report.skill_count, book_report.book_count).await
@@ -98,6 +132,7 @@ pub async fn run(config: AppConfig) -> eyre::Result<()> {
                 config.server.listen,
                 skill_report.skill_count,
                 book_report.book_count,
+                http_body_limit,
             )
             .await
         }
@@ -126,6 +161,7 @@ async fn serve_http(
     listen_address: SocketAddr,
     loaded_skills: usize,
     loaded_books: usize,
+    http_body_limit: usize,
 ) -> eyre::Result<()> {
     let config = StreamableHttpServerConfig::default()
         .with_legacy_session_mode(false)
@@ -136,12 +172,14 @@ async fn serve_http(
         Arc::new(NeverSessionManager::default()),
         config,
     );
-    let router = axum::Router::new().nest_service(HTTP_PATH, mcp_service);
+    let router = axum::Router::new()
+        .nest_service(HTTP_PATH, mcp_service)
+        .layer(RequestBodyLimitLayer::new(http_body_limit));
     let listener = tokio::net::TcpListener::bind(listen_address).await?;
     let local_address = listener.local_addr()?;
 
     info!(
-        "MCP server ready: transport=http, bind_address={local_address}, http_port={}, endpoint=http://{local_address}{HTTP_PATH}, loaded_skills={loaded_skills}, loaded_books={loaded_books}",
+        "MCP server ready: transport=http, bind_address={local_address}, http_port={}, endpoint=http://{local_address}{HTTP_PATH}, loaded_skills={loaded_skills}, loaded_books={loaded_books}, max_request_bytes={http_body_limit}",
         local_address.port()
     );
     axum::serve(listener, router)

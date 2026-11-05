@@ -98,6 +98,33 @@ pub struct UpdateBookRequest {
 /// `delete_book` MCP 工具接收的参数。
 #[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, schemars::JsonSchema)]
 pub struct DeleteBookRequest {
-    /// 要连同全部 Markdown 资源一起永久删除的电子书名称。
+    /// 要连同全部 Markdown 和导入文档资源一起永久删除的电子书名称。
     pub name: String,
+}
+
+/// `import_book_document` MCP 工具接收的参数。
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, schemars::JsonSchema)]
+pub struct ImportBookDocumentRequest {
+    /// 文档必须归属的现有电子书名称；Agent 不得自行猜测该值。
+    pub book_name: String,
+    /// 文档来源，支持受限本地路径或 MCP Base64 上传。
+    pub source: BookDocumentSource,
+}
+
+/// 导入 Book 文档的互斥输入来源。
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, schemars::JsonSchema)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum BookDocumentSource {
+    /// 从配置白名单下的本地文件读取。
+    LocalPath {
+        /// PDF、DOCX、PPTX、XLS 或 XLSX 文件路径。
+        path: String,
+    },
+    /// 通过 MCP JSON 参数上传 Base64 文档。
+    Base64 {
+        /// 保存到 Book `sources/` 目录中的安全文件名。
+        file_name: String,
+        /// 标准 Base64 编码的完整文件内容；可带 `data:*;base64,` 前缀。
+        content: String,
+    },
 }

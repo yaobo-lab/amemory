@@ -171,20 +171,51 @@ total_hits=1, elapsed_ms=2
 - `load_book`：加载一本书的 `BOOK.md` 或指定章节资源。
 - `add_book`：创建 `books/<name>/BOOK.md` 并自动同步到独立 Book track。
 - `update_book`：替换现有 `BOOK.md`，保留章节并自动同步。
-- `delete_book`：永久删除整本书目录和对应 Memvid 帧。
-- `sync_books`：重新扫描手工添加、修改或删除的 Markdown 文件。
+- `delete_book`：永久删除整本书目录、源文档和对应 Memvid 父/子帧。
+- `import_book_document`：将 PDF、DOCX、PPTX、XLS 或 XLSX 归档到用户明确选择的 Book，并执行 reader 提取、富化、分块、Smart Frame 写入和索引更新。
+- `sync_books`：重新扫描手工添加、修改或删除的 Markdown 与 `sources/` 文档。
 
 一本书使用如下结构：
 
 ```text
 books/rust-book/
 ├── BOOK.md
-└── chapters/
-    ├── 01-introduction.md
-    └── 02-ownership.md
+├── chapters/
+│   ├── 01-introduction.md
+│   └── 02-ownership.md
+└── sources/
+    ├── rust-reference.pdf
+    └── examples.xlsx
 ```
 
 Book 使用独立的 `books://catalog`、`book://` URI 和 `books` track，不会覆盖 Skill 数据。
+
+调用 `import_book_document` 前，Agent 必须确认用户指定了 `book_name`；如果没有指定，先调用 `list_books` 并询问用户，不能自行选择。工具支持两种互斥来源：
+
+```json
+{
+    "book_name": "voip",
+    "source": {
+        "type": "local_path",
+        "path": "uploads/voip.pdf"
+    }
+}
+```
+
+`local_path` 必须位于 `document_import.allowed_roots` 白名单内。能访问附件原始字节的 MCP Client 也可以发送：
+
+```json
+{
+    "book_name": "voip",
+    "source": {
+        "type": "base64",
+        "file_name": "voip.pdf",
+        "content": "JVBERi0xLjQK..."
+    }
+}
+```
+
+Base64 可带 `data:*;base64,` 前缀。解码后的文件不能超过 `document_import.max_file_bytes`。配置 `embedding.provider = "none"` 时仍会完成提取、富化、分块和词法索引；`openai` 从 `embedding.api_key_env` 指定的环境变量读取密钥；`local` 需要用 `--features local-embedding` 构建并预先准备 ONNX 模型和 tokenizer。
 
 ## 4. 项目启动后发生了什么
 

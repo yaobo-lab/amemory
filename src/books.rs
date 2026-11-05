@@ -8,19 +8,26 @@ use std::{
 };
 
 use eyre::Context;
-use memvid_core::{DocMetadata, FrameStatus, Memvid, PutOptions};
+use memvid_core::{
+    DocMetadata, DocumentFormat, EmbeddingProvider, FrameStatus, Memvid, PutOptions, ReaderHint,
+    ReaderRegistry,
+};
 use serde::{Deserialize, Serialize};
 
 const CATALOG_URI: &str = "books://catalog";
 const BOOK_TRACK: &str = "books";
 const BOOK_ENTRY_FILE: &str = "BOOK.md";
+const BOOK_SOURCES_DIR: &str = "sources";
 const MAX_PART_CHARS: usize = 1_800;
 const MAX_BOOK_DOCUMENT_BYTES: usize = 16 * 1024 * 1024;
+const DOCUMENT_EMBEDDER_KEY: &str = "book_embedding_provider";
+const DOCUMENT_HASH_KEY: &str = "book_source_blake3";
 
 /// 当前 Book 目录的内存目录。
 #[derive(Clone, Debug)]
 pub struct BookCatalog {
     root: PathBuf,
+    max_document_bytes: usize,
     books: BTreeMap<String, BookDefinition>,
 }
 
@@ -33,12 +40,89 @@ pub struct BookDefinition {
     author: Option<String>,
     entry_file: String,
     files: BTreeMap<String, BookFile>,
+    documents: BTreeMap<String, BookDocument>,
 }
 
 #[derive(Clone, Debug)]
 struct BookFile {
     content: String,
     part_count: usize,
+}
+
+#[derive(Clone, Debug)]
+struct BookDocument {
+    full_path: PathBuf,
+    kind: BookDocumentKind,
+    size: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum BookDocumentKind {
+    Pdf,
+    Docx,
+    Pptx,
+    Xls,
+    Xlsx,
+}
+
+impl BookDocumentKind {
+    const fn mime(self) -> &'static str {
+        match self {
+            Self::Pdf => "application/pdf",
+            Self::Docx => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            Self::Pptx => {
+                "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+            }
+            Self::Xls => "application/vnd.ms-excel",
+            Self::Xlsx => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        }
+    }
+
+    const fn format(self) -> DocumentFormat {
+        match self {
+            Self::Pdf => DocumentFormat::Pdf,
+            Self::Docx => DocumentFormat::Docx,
+            Self::Pptx => DocumentFormat::Pptx,
+            Self::Xls => DocumentFormat::Xls,
+            Self::Xlsx => DocumentFormat::Xlsx,
+        }
+    }
+}
+
+/// Reader 对导入文档执行完整文本提取后的检查结果。
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BookDocumentInspection {
+    /// 导入后使用的安全 leaf 文件名。
+    pub file_name: String,
+    /// 根据扩展名确定的 MIME 类型。
+    pub mime: String,
+    /// 原始文档字节数。
+    pub bytes: usize,
+    /// 实际执行提取的 Memvid reader 名称。
+    pub reader_name: String,
+    /// 提取全文的 Unicode 字符数。
+    pub extracted_chars: usize,
+    /// Reader 返回的非致命警告。
+    pub warnings: Vec<String>,
+    /// Reader 是否使用了回退提取路径。
+    pub fallback: bool,
+    /// Reader 报告的处理页数。
+    pub pages_processed: Option<u32>,
+    /// Reader 报告的提取耗时（毫秒）。
+    pub duration_ms: Option<u64>,
+}
+
+/// 从白名单目录安全读取、可直接保存的本地文档。
+#[allow(
+    dead_code,
+    reason = "public document import API is integrated by the MCP layer"
+)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LocalBookDocument {
+    /// 源路径的 UTF-8 leaf 文件名。
+    pub file_name: String,
+    /// 在大小限制内读取的完整原始内容。
+    pub bytes: Vec<u8>,
 }
 
 /// 将 Book 目录内容同步到 Memvid 后的统计信息。
@@ -50,6 +134,12 @@ pub struct BookSyncReport {
     pub unchanged_parts: usize,
     /// 因源文件或 Book 已删除而移除的分块数。
     pub deleted_parts: usize,
+    /// 新增或替换的 PDF/Office 文档数。
+    pub written_documents: usize,
+    /// 内容和嵌入配置均未变化的 PDF/Office 文档数。
+    pub unchanged_documents: usize,
+    /// 因源文件或 Book 已删除而移除的 PDF/Office 文档数。
+    pub deleted_documents: usize,
     /// 当前可用的 Book 数量。
     pub book_count: usize,
 }
@@ -59,7 +149,7 @@ pub struct BookSyncReport {
 pub struct BookMutationError {
     kind: BookMutationErrorKind,
     message: String,
-    source: Option<io::Error>,
+    source: Option<Box<dyn Error + Send + Sync>>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -87,7 +177,15 @@ impl BookMutationError {
         Self {
             kind: BookMutationErrorKind::FileSystem,
             message: format!("{operation} {}", path.display()),
-            source: Some(source),
+            source: Some(Box::new(source)),
+        }
+    }
+
+    fn document(operation: impl Into<String>, source: impl Error + Send + Sync + 'static) -> Self {
+        Self {
+            kind: BookMutationErrorKind::InvalidRequest,
+            message: operation.into(),
+            source: Some(Box::new(source)),
         }
     }
 }
@@ -104,23 +202,27 @@ impl fmt::Display for BookMutationError {
 
 impl Error for BookMutationError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
-        self.source.as_ref().map(|source| source as _)
+        self.source.as_deref().map(|source| source as _)
     }
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 struct StoredCatalog {
     version: u32,
     books: BTreeMap<String, StoredBook>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 struct StoredBook {
     title: String,
     description: Option<String>,
     author: Option<String>,
     entry_file: String,
     files: BTreeMap<String, usize>,
+    #[serde(default)]
+    file_blake3: BTreeMap<String, String>,
+    #[serde(default)]
+    documents: BTreeMap<String, String>,
 }
 
 #[derive(Debug)]
@@ -140,7 +242,7 @@ impl BookCatalog {
     ///
     /// 根目录不可读取、Book 名称或 `BOOK.md` 无效、目录内存在符号链接，或者文件系统
     /// 操作失败时返回错误。
-    pub fn scan(root: impl AsRef<Path>) -> eyre::Result<Self> {
+    pub fn scan(root: impl AsRef<Path>, max_document_bytes: usize) -> eyre::Result<Self> {
         let root = root.as_ref().to_path_buf();
         let mut directories = fs::read_dir(&root)
             .wrap_err_with(|| format!("reading books directory {}", root.display()))?
@@ -160,20 +262,30 @@ impl BookCatalog {
                 continue;
             }
 
-            let definition = scan_book_directory(&directory.path())?;
+            let definition = scan_book_directory(&directory.path(), max_document_bytes)?;
             let name = definition.name.clone();
             if books.insert(name.clone(), definition).is_some() {
                 eyre::bail!("duplicate book name: {name}");
             }
         }
 
-        Ok(Self { root, books })
+        Ok(Self {
+            root,
+            max_document_bytes,
+            books,
+        })
     }
 
     /// 返回 Book 根目录。
     #[must_use]
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    /// 返回单个导入文档允许的最大字节数。
+    #[must_use]
+    pub const fn max_document_bytes(&self) -> usize {
+        self.max_document_bytes
     }
 
     /// 按稳定名称查找 Book。
@@ -222,6 +334,11 @@ impl BookDefinition {
     /// 按路径排序迭代 Book 中的 UTF-8 Markdown 文件。
     pub fn file_paths(&self) -> impl Iterator<Item = &str> {
         self.files.keys().map(String::as_str)
+    }
+
+    /// 按路径排序迭代已导入的 PDF 和 Office 源文档。
+    pub fn document_paths(&self) -> impl Iterator<Item = &str> {
+        self.documents.keys().map(String::as_str)
     }
 
     /// 返回指定 Markdown 文件的稳定分块数量。
@@ -309,6 +426,223 @@ pub fn update_book(root: &Path, name: &str, content: &str) -> Result<PathBuf, Bo
     Ok(directory)
 }
 
+/// 校验文档名是受支持格式的安全 leaf 文件名。
+///
+/// # Errors
+///
+/// 文件名为空、包含目录或控制字符、过长，或者扩展名不在白名单中时返回错误。
+pub fn validate_document_file_name(file_name: &str) -> Result<(), BookMutationError> {
+    validated_document_kind(file_name).map(|_| ())
+}
+
+/// 使用默认 Memvid reader 完整检查一个待导入文档。
+///
+/// 检查会验证安全文件名、扩展名、字节限制，并要求 reader 提取到非空文本。
+///
+/// # Errors
+///
+/// 文件名或大小无效、没有匹配 reader、reader 提取失败，或文档没有可提取文本时返回错误。
+#[allow(
+    dead_code,
+    reason = "public document import API is integrated by the MCP layer"
+)]
+pub fn inspect_document(
+    file_name: &str,
+    bytes: &[u8],
+    max_document_bytes: usize,
+) -> Result<BookDocumentInspection, BookMutationError> {
+    inspect_document_with_text(file_name, bytes, max_document_bytes)
+        .map(|(inspection, _)| inspection)
+}
+
+fn inspect_document_with_text(
+    file_name: &str,
+    bytes: &[u8],
+    max_document_bytes: usize,
+) -> Result<(BookDocumentInspection, String), BookMutationError> {
+    let kind = validated_document_kind(file_name)?;
+    validate_document_size(bytes.len(), max_document_bytes)?;
+
+    let registry = ReaderRegistry::default();
+    let hint = ReaderHint::new(Some(kind.mime()), Some(kind.format()))
+        .with_uri(Some(file_name))
+        .with_magic(Some(bytes));
+    let reader = registry.find_reader(&hint).ok_or_else(|| {
+        BookMutationError::invalid(format!(
+            "no Memvid reader accepted document '{file_name}' ({})",
+            kind.mime()
+        ))
+    })?;
+    let output = reader.extract(bytes, &hint).map_err(|error| {
+        BookMutationError::document(
+            format!("extracting document '{file_name}' with {}", reader.name()),
+            error,
+        )
+    })?;
+    let extracted_text = output
+        .document
+        .text
+        .filter(|text| !text.trim().is_empty())
+        .ok_or_else(|| {
+            BookMutationError::invalid(format!(
+                "document contains no extractable text: {file_name}"
+            ))
+        })?;
+    let extracted_chars = extracted_text.chars().count();
+    let inspection = BookDocumentInspection {
+        file_name: file_name.to_owned(),
+        mime: kind.mime().to_owned(),
+        bytes: bytes.len(),
+        reader_name: output.reader_name,
+        extracted_chars,
+        warnings: output.diagnostics.warnings,
+        fallback: output.diagnostics.fallback,
+        pages_processed: output.diagnostics.pages_processed,
+        duration_ms: output.diagnostics.duration_ms,
+    };
+    Ok((inspection, extracted_text))
+}
+
+/// 从配置白名单内 canonicalize 并安全读取本地文档。
+///
+/// # Errors
+///
+/// 源路径或白名单根目录无法 canonicalize、源不在任何白名单根目录内、源不是常规文件、
+/// 文件名或格式无效、文件超过限制，或者读取失败时返回错误。
+#[allow(
+    dead_code,
+    reason = "public document import API is integrated by the MCP layer"
+)]
+pub fn read_local_document(
+    source_path: &Path,
+    allowed_roots: &[PathBuf],
+    max_document_bytes: usize,
+) -> Result<LocalBookDocument, BookMutationError> {
+    let source_metadata = fs::symlink_metadata(source_path).map_err(|error| {
+        BookMutationError::file_system("checking document source", source_path, error)
+    })?;
+    if source_metadata.file_type().is_symlink() || !source_metadata.is_file() {
+        return Err(BookMutationError::invalid(format!(
+            "document source must be a regular non-symlink file: {}",
+            source_path.display()
+        )));
+    }
+    let canonical_source = fs::canonicalize(source_path).map_err(|error| {
+        BookMutationError::file_system("canonicalizing document source", source_path, error)
+    })?;
+
+    let mut canonical_roots = Vec::with_capacity(allowed_roots.len());
+    for root in allowed_roots {
+        let canonical_root = fs::canonicalize(root).map_err(|error| {
+            BookMutationError::file_system("canonicalizing allowed document root", root, error)
+        })?;
+        let metadata = fs::metadata(&canonical_root).map_err(|error| {
+            BookMutationError::file_system("checking allowed document root", &canonical_root, error)
+        })?;
+        if !metadata.is_dir() {
+            return Err(BookMutationError::invalid(format!(
+                "allowed document root is not a directory: {}",
+                canonical_root.display()
+            )));
+        }
+        canonical_roots.push(canonical_root);
+    }
+    if !canonical_roots
+        .iter()
+        .any(|root| canonical_source.starts_with(root))
+    {
+        return Err(BookMutationError::invalid(format!(
+            "document source is outside allowed roots: {}",
+            canonical_source.display()
+        )));
+    }
+
+    let metadata = fs::metadata(&canonical_source).map_err(|error| {
+        BookMutationError::file_system("checking document source", &canonical_source, error)
+    })?;
+    if !metadata.is_file() {
+        return Err(BookMutationError::invalid(format!(
+            "document source is not a regular file: {}",
+            canonical_source.display()
+        )));
+    }
+    let size = usize::try_from(metadata.len()).map_err(|_| {
+        BookMutationError::invalid(format!(
+            "document is too large for this platform: {}",
+            canonical_source.display()
+        ))
+    })?;
+    validate_document_size(size, max_document_bytes)?;
+
+    let file_name = canonical_source
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| BookMutationError::invalid("document file name must be valid UTF-8"))?
+        .to_owned();
+    validate_document_file_name(&file_name)?;
+    let bytes = fs::read(&canonical_source).map_err(|error| {
+        BookMutationError::file_system("reading document source", &canonical_source, error)
+    })?;
+    validate_document_size(bytes.len(), max_document_bytes)?;
+
+    Ok(LocalBookDocument { file_name, bytes })
+}
+
+/// 将 PDF 或 Office 文档保存到现有 Book 的 `sources/` 目录。
+///
+/// # Errors
+///
+/// Book 或文件名无效、格式不受支持、内容为空或超过限制，或者文件系统操作失败时返回错误。
+pub fn store_document(
+    root: &Path,
+    book_name: &str,
+    file_name: &str,
+    bytes: &[u8],
+    max_document_bytes: usize,
+) -> Result<PathBuf, BookMutationError> {
+    validate_book_name(book_name)?;
+    validate_document_file_name(file_name)?;
+    validate_document_size(bytes.len(), max_document_bytes)?;
+
+    let directory = existing_book_directory(root, book_name)?;
+    let sources = directory.join(BOOK_SOURCES_DIR);
+    match fs::symlink_metadata(&sources) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
+            return Err(BookMutationError::invalid(format!(
+                "book sources path is not a regular directory: {}",
+                sources.display()
+            )));
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            fs::create_dir(&sources).map_err(|error| {
+                BookMutationError::file_system("creating book sources directory", &sources, error)
+            })?;
+        }
+        Err(error) => {
+            return Err(BookMutationError::file_system(
+                "checking book sources directory",
+                &sources,
+                error,
+            ));
+        }
+    }
+
+    let destination = sources.join(file_name);
+    if let Ok(metadata) = fs::symlink_metadata(&destination)
+        && (metadata.file_type().is_symlink() || !metadata.is_file())
+    {
+        return Err(BookMutationError::invalid(format!(
+            "document destination is not a regular file: {}",
+            destination.display()
+        )));
+    }
+    fs::write(&destination, bytes).map_err(|error| {
+        BookMutationError::file_system("writing book source document", &destination, error)
+    })?;
+    Ok(destination)
+}
+
 /// 永久删除一个 Book 目录及其全部资源文件。
 ///
 /// # Errors
@@ -357,6 +691,55 @@ fn validate_book_name(name: &str) -> Result<(), BookMutationError> {
         ));
     }
     Ok(())
+}
+
+fn validated_document_kind(file_name: &str) -> Result<BookDocumentKind, BookMutationError> {
+    let path = Path::new(file_name);
+    if file_name.is_empty()
+        || file_name.len() > 255
+        || file_name.chars().any(|character| {
+            character.is_control()
+                || matches!(
+                    character,
+                    '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*'
+                )
+        })
+        || file_name.ends_with(' ')
+        || file_name.ends_with('.')
+        || path.file_name().and_then(|name| name.to_str()) != Some(file_name)
+    {
+        return Err(BookMutationError::invalid(
+            "file_name must be a safe plain file name without directories, control characters, or reserved characters",
+        ));
+    }
+    document_kind(path).ok_or_else(|| {
+        BookMutationError::invalid(
+            "supported document extensions are pdf, docx, pptx, xls, and xlsx",
+        )
+    })
+}
+
+fn validate_document_size(size: usize, max_document_bytes: usize) -> Result<(), BookMutationError> {
+    if size == 0 {
+        return Err(BookMutationError::invalid("document must not be empty"));
+    }
+    if size > max_document_bytes {
+        return Err(BookMutationError::invalid(format!(
+            "document exceeds the {max_document_bytes}-byte limit"
+        )));
+    }
+    Ok(())
+}
+
+fn document_kind(path: &Path) -> Option<BookDocumentKind> {
+    match path.extension()?.to_str()?.to_ascii_lowercase().as_str() {
+        "pdf" => Some(BookDocumentKind::Pdf),
+        "docx" => Some(BookDocumentKind::Docx),
+        "pptx" => Some(BookDocumentKind::Pptx),
+        "xls" => Some(BookDocumentKind::Xls),
+        "xlsx" => Some(BookDocumentKind::Xlsx),
+        _ => None,
+    }
 }
 
 fn validate_book_document(name: &str, content: &str) -> Result<BookMetadata, BookMutationError> {
@@ -438,14 +821,45 @@ fn optional_metadata(metadata: &BTreeMap<String, String>, key: &str) -> Option<S
 
 /// 将当前 Book 目录增量同步到独立的 Memvid Book track。
 ///
-/// 所有资源使用 `book://` URI，目录使用 `books://catalog` URI。发生变化时，本函数在完成
-/// 全部增量写入和删除后只提交一次。
+/// 所有资源使用 `book://` URI，目录使用 `books://catalog` URI。资源发生变化时先提交父子帧，
+/// 再单独更新目录，避免大量文档 chunk 触发的自动 checkpoint 与目录更新相互覆盖。
 ///
 /// # Errors
 ///
 /// Memvid 帧读取、写入、删除、序列化或提交失败时返回错误。
-pub fn sync_to_memvid(memvid: &mut Memvid, catalog: &BookCatalog) -> eyre::Result<BookSyncReport> {
+pub fn sync_to_memvid(
+    memvid: &mut Memvid,
+    catalog: &BookCatalog,
+    embedder: Option<&dyn EmbeddingProvider>,
+) -> eyre::Result<BookSyncReport> {
     let previous = read_stored_catalog(memvid)?;
+    sync_to_memvid_with_previous(memvid, catalog, &previous, embedder)
+}
+
+/// 使用服务内存中的上一版 Book 目录执行增量同步。
+///
+/// 运行期使用此入口可避免在同一个 Memvid 实例中读取刚经过 checkpoint 的目录帧；进程启动
+/// 时仍应使用 [`sync_to_memvid`] 从持久化目录恢复状态。
+///
+/// # Errors
+///
+/// 文档读取、Memvid 帧写入、删除、序列化或提交失败时返回错误。
+pub fn sync_to_memvid_incremental(
+    memvid: &mut Memvid,
+    previous_catalog: &BookCatalog,
+    catalog: &BookCatalog,
+    embedder: Option<&dyn EmbeddingProvider>,
+) -> eyre::Result<BookSyncReport> {
+    let previous = StoredCatalog::from(previous_catalog);
+    sync_to_memvid_with_previous(memvid, catalog, &previous, embedder)
+}
+
+fn sync_to_memvid_with_previous(
+    memvid: &mut Memvid,
+    catalog: &BookCatalog,
+    previous: &StoredCatalog,
+    embedder: Option<&dyn EmbeddingProvider>,
+) -> eyre::Result<BookSyncReport> {
     let current = StoredCatalog::from(catalog);
     let mut report = BookSyncReport {
         book_count: catalog.books.len(),
@@ -461,14 +875,42 @@ pub fn sync_to_memvid(memvid: &mut Memvid, catalog: &BookCatalog) -> eyre::Resul
         });
 
         for (path, file) in &book.files {
+            let content_hash = blake3::hash(file.content.as_bytes()).to_hex().to_string();
+            let file_unchanged = !metadata_changed
+                && previous
+                    .books
+                    .get(&book.name)
+                    .and_then(|old| old.file_blake3.get(path))
+                    .is_some_and(|old_hash| old_hash == &content_hash);
             for (index, part) in split_text(&file.content).iter().enumerate() {
                 let uri = part_uri(&book.name, path, index);
+                let frame_unchanged = file_unchanged
+                    && memvid
+                        .frame_by_uri(&uri)
+                        .is_ok_and(|frame| frame.status == FrameStatus::Active);
+                if frame_unchanged {
+                    report.unchanged_parts += 1;
+                    continue;
+                }
+
                 let options = book_part_options(book, path, part);
-                if upsert_frame(memvid, &uri, part.as_bytes(), options, metadata_changed)? {
+                if upsert_frame(memvid, &uri, part.as_bytes(), options)? {
                     report.written_parts += 1;
                 } else {
                     report.unchanged_parts += 1;
                 }
+            }
+        }
+    }
+
+    for book in catalog.books.values() {
+        for (path, document) in &book.documents {
+            let bytes = read_scanned_document(document, catalog.max_document_bytes)?;
+            let uri = document_uri(&book.name, path);
+            if upsert_document(memvid, book, path, document, &bytes, &uri, embedder)? {
+                report.written_documents += 1;
+            } else {
+                report.unchanged_documents += 1;
             }
         }
     }
@@ -486,6 +928,21 @@ pub fn sync_to_memvid(memvid: &mut Memvid, catalog: &BookCatalog) -> eyre::Resul
                 }
             }
         }
+        for old_path in old_book.documents.keys() {
+            let still_exists =
+                current_book.is_some_and(|book| book.documents.contains_key(old_path));
+            if !still_exists && delete_document_frame(memvid, &document_uri(old_name, old_path))? {
+                report.deleted_documents += 1;
+            }
+        }
+    }
+
+    let resources_changed = report.written_parts > 0
+        || report.deleted_parts > 0
+        || report.written_documents > 0
+        || report.deleted_documents > 0;
+    if resources_changed {
+        memvid.commit().wrap_err("committing book resources")?;
     }
 
     let serialized = serde_json::to_vec_pretty(&current)?;
@@ -499,9 +956,13 @@ pub fn sync_to_memvid(memvid: &mut Memvid, catalog: &BookCatalog) -> eyre::Resul
         .extract_triplets(false)
         .instant_index(false)
         .build();
-    let catalog_changed = upsert_frame(memvid, CATALOG_URI, &serialized, catalog_options, false)?;
+    let catalog_changed = if current == *previous {
+        false
+    } else {
+        replace_frame(memvid, CATALOG_URI, &serialized, catalog_options)?
+    };
 
-    if report.written_parts > 0 || report.deleted_parts > 0 || catalog_changed {
+    if catalog_changed {
         memvid.commit().wrap_err("committing book catalog")?;
     }
 
@@ -549,7 +1010,10 @@ pub fn load_resource(
     Ok((path.to_owned(), content))
 }
 
-fn scan_book_directory(directory: &Path) -> eyre::Result<BookDefinition> {
+fn scan_book_directory(
+    directory: &Path,
+    max_document_bytes: usize,
+) -> eyre::Result<BookDefinition> {
     let directory_metadata = fs::symlink_metadata(directory)
         .wrap_err_with(|| format!("checking book directory {}", directory.display()))?;
     if directory_metadata.file_type().is_symlink() || !directory_metadata.is_dir() {
@@ -606,6 +1070,7 @@ fn scan_book_directory(directory: &Path) -> eyre::Result<BookDefinition> {
     if !files.contains_key(BOOK_ENTRY_FILE) {
         eyre::bail!("book entry is not UTF-8: {}", entry_path.display());
     }
+    let documents = collect_book_documents(directory, max_document_bytes)?;
 
     Ok(BookDefinition {
         name: directory_name.to_owned(),
@@ -614,7 +1079,77 @@ fn scan_book_directory(directory: &Path) -> eyre::Result<BookDefinition> {
         author: metadata.author,
         entry_file: BOOK_ENTRY_FILE.to_owned(),
         files,
+        documents,
     })
+}
+
+fn collect_book_documents(
+    book_directory: &Path,
+    max_document_bytes: usize,
+) -> eyre::Result<BTreeMap<String, BookDocument>> {
+    let sources = book_directory.join(BOOK_SOURCES_DIR);
+    let metadata = match fs::symlink_metadata(&sources) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(BTreeMap::new()),
+        Err(error) => {
+            return Err(error).wrap_err_with(|| format!("checking {}", sources.display()));
+        }
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        eyre::bail!(
+            "book sources path is not a regular directory: {}",
+            sources.display()
+        );
+    }
+
+    let mut entries = fs::read_dir(&sources)
+        .wrap_err_with(|| format!("reading book sources directory {}", sources.display()))?
+        .collect::<Result<Vec<_>, _>>()?;
+    entries.sort_by_key(fs::DirEntry::file_name);
+
+    let mut documents = BTreeMap::new();
+    for entry in entries {
+        let path = entry.path();
+        let file_type = entry.file_type()?;
+        if file_type.is_symlink() {
+            eyre::bail!(
+                "book sources must not contain symbolic links: {}",
+                path.display()
+            );
+        }
+        if !file_type.is_file() {
+            continue;
+        }
+        let Some(kind) = document_kind(&path) else {
+            continue;
+        };
+        let size = usize::try_from(entry.metadata()?.len()).wrap_err_with(|| {
+            format!(
+                "document is too large for this platform: {}",
+                path.display()
+            )
+        })?;
+        if size == 0 || size > max_document_bytes {
+            eyre::bail!(
+                "book source document must contain 1..={max_document_bytes} bytes: {}",
+                path.display()
+            );
+        }
+        let file_name = entry
+            .file_name()
+            .into_string()
+            .map_err(|_| eyre::eyre!("book source file name is not UTF-8: {}", path.display()))?;
+        let relative_path = format!("{BOOK_SOURCES_DIR}/{file_name}");
+        documents.insert(
+            relative_path,
+            BookDocument {
+                full_path: path,
+                kind,
+                size,
+            },
+        );
+    }
+    Ok(documents)
 }
 
 fn collect_markdown_files(
@@ -637,6 +1172,9 @@ fn collect_markdown_files(
             );
         }
         if file_type.is_dir() {
+            if directory == root && entry.file_name() == BOOK_SOURCES_DIR {
+                continue;
+            }
             collect_markdown_files(root, &path, output)?;
         } else if file_type.is_file() && is_markdown(&path) {
             let relative = path
@@ -704,21 +1242,211 @@ fn book_part_options(book: &BookDefinition, path: &str, part: &str) -> PutOption
         .build()
 }
 
+fn read_scanned_document(
+    document: &BookDocument,
+    max_document_bytes: usize,
+) -> eyre::Result<Vec<u8>> {
+    let metadata = fs::symlink_metadata(&document.full_path).wrap_err_with(|| {
+        format!(
+            "checking book source document {}",
+            document.full_path.display()
+        )
+    })?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        eyre::bail!(
+            "book source document is not a regular file: {}",
+            document.full_path.display()
+        );
+    }
+    let size = usize::try_from(metadata.len()).wrap_err_with(|| {
+        format!(
+            "document is too large for this platform: {}",
+            document.full_path.display()
+        )
+    })?;
+    if size == 0 || size > max_document_bytes {
+        eyre::bail!(
+            "book source document must contain 1..={max_document_bytes} bytes: {}",
+            document.full_path.display()
+        );
+    }
+    if size != document.size {
+        eyre::bail!(
+            "book source document changed after catalog scan: {}",
+            document.full_path.display()
+        );
+    }
+
+    let bytes = fs::read(&document.full_path).wrap_err_with(|| {
+        format!(
+            "reading book source document {}",
+            document.full_path.display()
+        )
+    })?;
+    if bytes.len() != size {
+        eyre::bail!(
+            "book source document changed while being read: {}",
+            document.full_path.display()
+        );
+    }
+    Ok(bytes)
+}
+
+fn upsert_document(
+    memvid: &mut Memvid,
+    book: &BookDefinition,
+    path: &str,
+    document: &BookDocument,
+    bytes: &[u8],
+    uri: &str,
+    embedder: Option<&dyn EmbeddingProvider>,
+) -> eyre::Result<bool> {
+    let provider_label = embedder.map_or_else(
+        || "none".to_owned(),
+        |provider| format!("{}:{}", provider.kind(), provider.model()),
+    );
+    let content_hash = blake3::hash(bytes).to_hex().to_string();
+    let existing = memvid
+        .frame_by_uri(uri)
+        .ok()
+        .filter(|frame| frame.status == FrameStatus::Active);
+    if existing.as_ref().is_some_and(|frame| {
+        frame.extra_metadata.get(DOCUMENT_EMBEDDER_KEY) == Some(&provider_label)
+            && frame.extra_metadata.get(DOCUMENT_HASH_KEY) == Some(&content_hash)
+    }) {
+        return Ok(false);
+    }
+
+    let file_name = document
+        .full_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| eyre::eyre!("book document file name is not UTF-8: {path}"))?;
+    let (inspection, text) =
+        inspect_document_with_text(file_name, bytes, bytes.len()).map_err(eyre::Report::new)?;
+    for warning in &inspection.warnings {
+        log::warn!(
+            "book document reader warning: book={}, document={}, reader={}, warning={warning}",
+            book.name,
+            path,
+            inspection.reader_name
+        );
+    }
+    let reader_name = inspection.reader_name;
+
+    let prepared_embeddings = if let Some(provider) = embedder {
+        let parent = provider
+            .embed_text(&text)
+            .wrap_err_with(|| format!("embedding book document '{path}'"))?;
+        let chunks = if let Some(chunks) = memvid.preview_chunks(text.as_bytes()) {
+            let chunk_texts: Vec<&str> = chunks.iter().map(String::as_str).collect();
+            Some(
+                provider
+                    .embed_batch(&chunk_texts)
+                    .wrap_err_with(|| format!("embedding chunks for book document '{path}'"))?,
+            )
+        } else {
+            None
+        };
+        Some((parent, chunks))
+    } else {
+        None
+    };
+
+    let metadata = DocMetadata {
+        mime: Some(document.kind.mime().to_owned()),
+        bytes: Some(u64::try_from(bytes.len()).unwrap_or(u64::MAX)),
+        ..DocMetadata::default()
+    };
+    let mut options = PutOptions::builder()
+        .track(BOOK_TRACK)
+        .kind("book-document")
+        .uri(uri)
+        .title(format!("{} — {path}", book.title))
+        .metadata(metadata)
+        .push_tag("book")
+        .push_tag(book.name.clone())
+        .push_tag("book-document")
+        .label("book")
+        .auto_tag(true)
+        .extract_dates(true)
+        .extract_triplets(true)
+        .instant_index(false)
+        .extraction_budget_ms(0)
+        .build();
+    options
+        .extra_metadata
+        .insert(DOCUMENT_EMBEDDER_KEY.to_owned(), provider_label);
+    options
+        .extra_metadata
+        .insert(DOCUMENT_HASH_KEY.to_owned(), content_hash);
+    options
+        .extra_metadata
+        .insert("book_document_reader".to_owned(), reader_name);
+    options
+        .extra_metadata
+        .insert("book_resource".to_owned(), path.to_owned());
+
+    if existing.is_some() {
+        delete_document_frame(memvid, uri)?;
+    }
+    match prepared_embeddings {
+        Some((parent, Some(chunks))) => {
+            memvid.put_with_chunk_embeddings(bytes, Some(parent), chunks, options)?;
+        }
+        Some((parent, None)) => {
+            memvid.put_with_embedding_and_options(bytes, parent, options)?;
+        }
+        None => {
+            memvid.put_bytes_with_options(bytes, options)?;
+        }
+    }
+    Ok(true)
+}
+
+fn delete_document_frame(memvid: &mut Memvid, uri: &str) -> eyre::Result<bool> {
+    let Ok(parent) = memvid.frame_by_uri(uri) else {
+        return Ok(false);
+    };
+    if parent.status != FrameStatus::Active {
+        return Ok(false);
+    }
+
+    let child_ids: Vec<u64> = (0..memvid.frame_count())
+        .filter_map(|index| u64::try_from(index).ok())
+        .filter_map(|frame_id| memvid.frame_by_id(frame_id).ok())
+        .filter(|frame| frame.status == FrameStatus::Active && frame.parent_id == Some(parent.id))
+        .map(|frame| frame.id)
+        .collect();
+    for child_id in child_ids {
+        memvid.delete_frame(child_id)?;
+    }
+    memvid.delete_frame(parent.id)?;
+    Ok(true)
+}
+
+fn replace_frame(
+    memvid: &mut Memvid,
+    uri: &str,
+    bytes: &[u8],
+    mut options: PutOptions,
+) -> eyre::Result<bool> {
+    options.uri = Some(uri.to_owned());
+    delete_active_frame(memvid, uri)?;
+    memvid.put_bytes_with_options(bytes, options)?;
+    Ok(true)
+}
+
 fn upsert_frame(
     memvid: &mut Memvid,
     uri: &str,
     bytes: &[u8],
     mut options: PutOptions,
-    force: bool,
 ) -> eyre::Result<bool> {
     options.uri = Some(uri.to_owned());
     if let Ok(existing) = memvid.frame_by_uri(uri)
         && existing.status == FrameStatus::Active
     {
-        let current = memvid.frame_canonical_payload(existing.id)?;
-        if !force && current == bytes {
-            return Ok(false);
-        }
         memvid.update_frame(existing.id, Some(bytes.to_vec()), options, None)?;
         return Ok(true);
     }
@@ -761,6 +1489,21 @@ impl From<&BookCatalog> for StoredCatalog {
                     .iter()
                     .map(|(path, file)| (path.clone(), file.part_count))
                     .collect();
+                let file_blake3 = book
+                    .files
+                    .iter()
+                    .map(|(path, file)| {
+                        (
+                            path.clone(),
+                            blake3::hash(file.content.as_bytes()).to_hex().to_string(),
+                        )
+                    })
+                    .collect();
+                let documents = book
+                    .documents
+                    .iter()
+                    .map(|(path, document)| (path.clone(), document.kind.mime().to_owned()))
+                    .collect();
                 (
                     name.clone(),
                     StoredBook {
@@ -769,12 +1512,22 @@ impl From<&BookCatalog> for StoredCatalog {
                         author: book.author.clone(),
                         entry_file: book.entry_file.clone(),
                         files,
+                        file_blake3,
+                        documents,
                     },
                 )
             })
             .collect();
-        Self { version: 1, books }
+        Self { version: 3, books }
     }
+}
+
+fn document_uri(book_name: &str, path: &str) -> String {
+    format!(
+        "book://{}/documents/{}",
+        percent_encode(book_name),
+        percent_encode(path)
+    )
 }
 
 fn part_uri(book_name: &str, path: &str, index: usize) -> String {
@@ -885,7 +1638,8 @@ mod tests {
         );
         assert!(chapter.exists(), "update should preserve chapters");
 
-        let catalog = BookCatalog::scan(root.path()).expect("Book directory should scan");
+        let catalog =
+            BookCatalog::scan(root.path(), 1024 * 1024).expect("Book directory should scan");
         let book = catalog.book("demo-book").expect("Book should be present");
         assert_eq!(book.title(), "Updated Demo");
         assert_eq!(book.description(), Some("Test Book"));
@@ -935,9 +1689,159 @@ mod tests {
     }
 
     #[test]
+    fn validates_safe_document_file_names_and_extensions() {
+        assert!(
+            validate_document_file_name("quarterly-report.XLSX").is_ok(),
+            "supported extension should be case-insensitive"
+        );
+        for unsafe_name in [
+            "../report.pdf",
+            "folder/report.pdf",
+            "folder\\report.pdf",
+            "report.txt",
+            "report.pdf.",
+            "bad:name.pdf",
+        ] {
+            let error = validate_document_file_name(unsafe_name)
+                .expect_err("unsafe or unsupported file name should be rejected");
+            assert!(error.is_request_error(), "name={unsafe_name}: {error}");
+        }
+    }
+
+    #[test]
+    fn routes_every_supported_extension_to_a_memvid_reader() {
+        let registry = ReaderRegistry::default();
+        for file_name in [
+            "book.pdf",
+            "book.docx",
+            "slides.pptx",
+            "legacy.xls",
+            "workbook.xlsx",
+        ] {
+            let kind = validated_document_kind(file_name)
+                .expect("supported extension should identify a document kind");
+            let hint =
+                ReaderHint::new(Some(kind.mime()), Some(kind.format())).with_uri(Some(file_name));
+            assert!(
+                registry.find_reader(&hint).is_some(),
+                "no Memvid reader registered for {file_name}"
+            );
+        }
+    }
+
+    #[test]
+    fn scans_supported_documents_only_from_sources() {
+        let root = TestDirectory::create();
+        let directory = create_book(
+            root.path(),
+            "document-book",
+            &book_document("document-book", "Documents", "Entry"),
+        )
+        .expect("Book should be created");
+        let sources = directory.join(BOOK_SOURCES_DIR);
+        fs::create_dir(&sources).expect("sources directory should be created");
+        fs::write(sources.join("report.PDF"), b"fake pdf")
+            .expect("supported source should be written");
+        fs::write(sources.join("notes.txt"), b"ignored")
+            .expect("unsupported source should be written");
+        fs::write(directory.join("outside.docx"), b"ignored")
+            .expect("document outside sources should be written");
+        fs::write(sources.join("hidden.md"), b"# Not a chapter")
+            .expect("Markdown in sources should be written");
+
+        let catalog = BookCatalog::scan(root.path(), 1024).expect("Book should scan");
+        let book = catalog.book("document-book").expect("Book should exist");
+        assert_eq!(
+            book.document_paths().collect::<Vec<_>>(),
+            vec!["sources/report.PDF"],
+            "only supported direct source documents should be listed"
+        );
+        assert_eq!(
+            book.file_paths().collect::<Vec<_>>(),
+            vec!["BOOK.md"],
+            "sources must not contribute Markdown resources"
+        );
+    }
+
+    #[test]
+    fn stores_document_bytes_in_book_sources() {
+        let root = TestDirectory::create();
+        create_book(
+            root.path(),
+            "stored-book",
+            &book_document("stored-book", "Stored", "Entry"),
+        )
+        .expect("Book should be created");
+        let bytes = b"minimal fake office bytes";
+
+        let path = store_document(
+            root.path(),
+            "stored-book",
+            "manual.docx",
+            bytes,
+            bytes.len(),
+        )
+        .expect("document should be stored without requiring reader success");
+
+        assert_eq!(
+            path,
+            root.path()
+                .join("stored-book")
+                .join(BOOK_SOURCES_DIR)
+                .join("manual.docx")
+        );
+        assert_eq!(
+            fs::read(path).expect("stored document should be readable"),
+            bytes
+        );
+    }
+
+    #[test]
+    fn reads_local_documents_only_from_canonical_allowed_roots() {
+        let allowed = TestDirectory::create();
+        let outside = TestDirectory::create();
+        let source = allowed.path().join("allowed.pdf");
+        let outside_source = outside.path().join("outside.pdf");
+        fs::write(&source, b"allowed bytes").expect("allowed source should be written");
+        fs::write(&outside_source, b"outside bytes").expect("outside source should be written");
+        let roots = vec![allowed.path().to_path_buf()];
+
+        let document = read_local_document(&source, &roots, 1024)
+            .expect("source below an allowed root should be read");
+        assert_eq!(document.file_name, "allowed.pdf");
+        assert_eq!(document.bytes, b"allowed bytes");
+
+        let error = read_local_document(&outside_source, &roots, 1024)
+            .expect_err("source outside allowed roots should be rejected");
+        assert!(error.is_request_error(), "unexpected error: {error}");
+        assert!(
+            error.to_string().contains("outside allowed roots"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn deserializes_catalogs_without_document_entries() {
+        let stored: StoredCatalog = serde_json::from_str(
+            r#"{"version":1,"books":{"demo":{"title":"Demo","description":null,"author":null,"entry_file":"BOOK.md","files":{"BOOK.md":1}}}}"#,
+        )
+        .expect("legacy catalog should deserialize");
+
+        assert!(
+            stored.books["demo"].file_blake3.is_empty(),
+            "legacy books should default to no Markdown hashes"
+        );
+        assert!(
+            stored.books["demo"].documents.is_empty(),
+            "legacy books should default to no documents"
+        );
+    }
+
+    #[test]
     fn scans_an_empty_book_directory() {
         let root = TestDirectory::create();
-        let catalog = BookCatalog::scan(root.path()).expect("empty directory should be valid");
+        let catalog =
+            BookCatalog::scan(root.path(), 1024 * 1024).expect("empty directory should be valid");
 
         assert_eq!(catalog.iter().count(), 0, "catalog should be empty");
     }

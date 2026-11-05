@@ -3,10 +3,10 @@
 mod app;
 mod books;
 mod config;
+mod embedding;
 mod models;
 mod service;
 mod skills;
-
 use toolkit_rs::{
     logger,
     painc::{PaincConf, set_panic_handler},

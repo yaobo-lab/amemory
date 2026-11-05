@@ -5,6 +5,8 @@ use std::{
     sync::{Arc, Mutex, RwLock},
 };
 
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
+
 use memvid_core::{Memvid, SearchRequest};
 use rmcp::{
     ErrorData as McpError, ServerHandler,
@@ -20,14 +22,19 @@ use tokio::task;
 use crate::{
     books::{
         BookCatalog, BookDefinition, BookMutationError, BookSyncReport,
-        create_book as create_book_file, delete_book as delete_book_directory,
-        load_resource as load_book_resource, sync_to_memvid as sync_books_to_memvid,
+        create_book as create_book_file, delete_book as delete_book_directory, inspect_document,
+        load_resource as load_book_resource, read_local_document as read_book_local_document,
+        store_document as store_book_document,
+        sync_to_memvid_incremental as sync_books_to_memvid_incremental,
         update_book as update_book_file,
     },
+    config::DocumentImportConfig,
+    embedding::SharedEmbedder,
     models::{
-        AddBookRequest, AddChunkRequest, AddSkillRequest, DeleteBookRequest, DeleteSkillRequest,
-        FindBooksRequest, FindSkillsRequest, LoadBookRequest, LoadSkillRequest, SearchToolRequest,
-        UpdateBookRequest, UpdateSkillRequest,
+        AddBookRequest, AddChunkRequest, AddSkillRequest, BookDocumentSource, DeleteBookRequest,
+        DeleteSkillRequest, FindBooksRequest, FindSkillsRequest, ImportBookDocumentRequest,
+        LoadBookRequest, LoadSkillRequest, SearchToolRequest, UpdateBookRequest,
+        UpdateSkillRequest,
     },
     skills::{
         SkillCatalog, SkillDefinition, SkillMutationError, SyncReport,
@@ -39,10 +46,56 @@ use crate::{
 /// 处理由共享 Memvid 内存存储支持的 MCP 工具调用。
 #[derive(Clone)]
 pub struct MemvidService {
-    memvid: Arc<Mutex<Memvid>>,
+    memvid: Arc<Mutex<MemvidSlot>>,
     skills: Arc<RwLock<SkillCatalog>>,
     books: Arc<RwLock<BookCatalog>>,
+    document_import: Arc<DocumentImportConfig>,
+    embedder: Option<SharedEmbedder>,
     tool_router: ToolRouter<Self>,
+}
+
+struct MemvidSlot {
+    memory: Option<Memvid>,
+    path: PathBuf,
+}
+
+impl MemvidSlot {
+    const fn new(memory: Memvid, path: PathBuf) -> Self {
+        Self {
+            memory: Some(memory),
+            path,
+        }
+    }
+
+    fn memory_mut(&mut self) -> Result<&mut Memvid, String> {
+        self.memory
+            .as_mut()
+            .ok_or_else(|| "Memvid storage is unavailable after a failed reopen".to_owned())
+    }
+
+    fn synchronize<T>(
+        &mut self,
+        operation: impl FnOnce(&mut Memvid) -> Result<T, String>,
+    ) -> Result<T, String> {
+        let result = self.memory_mut().and_then(operation);
+        let reopen_result = self.reopen();
+        match (result, reopen_result) {
+            (Ok(value), Ok(())) => Ok(value),
+            (Err(error), Ok(())) | (Ok(_), Err(error)) => Err(error),
+            (Err(operation_error), Err(reopen_error)) => {
+                Err(format!("{operation_error}; {reopen_error}"))
+            }
+        }
+    }
+
+    fn reopen(&mut self) -> Result<(), String> {
+        drop(self.memory.take());
+        let reopened = Memvid::open(&self.path).map_err(|error| {
+            format!("reopening Memvid storage {}: {error}", self.path.display())
+        })?;
+        self.memory = Some(reopened);
+        Ok(())
+    }
 }
 
 fn internal(msg: impl Into<String>) -> McpError {
@@ -96,12 +149,14 @@ struct SkillMutationOutcome {
 
 fn rescan_and_sync_skills(
     catalog: &mut SkillCatalog,
-    memvid: &Mutex<Memvid>,
+    memvid: &Mutex<MemvidSlot>,
 ) -> Result<SyncReport, String> {
     let updated = SkillCatalog::scan(catalog.root()).map_err(|error| error.to_string())?;
     let report = {
-        let mut memvid = memvid.lock().expect("Memvid lock poisoned");
-        sync_skills_to_memvid(&mut memvid, &updated).map_err(|error| error.to_string())?
+        let mut slot = memvid.lock().expect("Memvid lock poisoned");
+        slot.synchronize(|memory| {
+            sync_skills_to_memvid(memory, &updated).map_err(|error| error.to_string())
+        })?
     };
     *catalog = updated;
     Ok(report)
@@ -109,7 +164,7 @@ fn rescan_and_sync_skills(
 
 fn mutate_skill_catalog(
     skills: &RwLock<SkillCatalog>,
-    memvid: &Mutex<Memvid>,
+    memvid: &Mutex<MemvidSlot>,
     mutation: impl FnOnce(&Path) -> Result<PathBuf, SkillMutationError>,
 ) -> Result<SkillMutationOutcome, CatalogMutationError> {
     let mut catalog = skills.write().expect("Skill catalog lock poisoned");
@@ -128,12 +183,17 @@ struct BookMutationOutcome {
 
 fn rescan_and_sync_books(
     catalog: &mut BookCatalog,
-    memvid: &Mutex<Memvid>,
+    memvid: &Mutex<MemvidSlot>,
+    embedder: Option<&dyn memvid_core::EmbeddingProvider>,
 ) -> Result<BookSyncReport, String> {
-    let updated = BookCatalog::scan(catalog.root()).map_err(|error| error.to_string())?;
+    let updated = BookCatalog::scan(catalog.root(), catalog.max_document_bytes())
+        .map_err(|error| error.to_string())?;
     let report = {
-        let mut memvid = memvid.lock().expect("Memvid lock poisoned");
-        sync_books_to_memvid(&mut memvid, &updated).map_err(|error| error.to_string())?
+        let mut slot = memvid.lock().expect("Memvid lock poisoned");
+        slot.synchronize(|memory| {
+            sync_books_to_memvid_incremental(memory, catalog, &updated, embedder)
+                .map_err(|error| error.to_string())
+        })?
     };
     *catalog = updated;
     Ok(report)
@@ -141,15 +201,62 @@ fn rescan_and_sync_books(
 
 fn mutate_book_catalog(
     books: &RwLock<BookCatalog>,
-    memvid: &Mutex<Memvid>,
+    memvid: &Mutex<MemvidSlot>,
+    embedder: Option<&dyn memvid_core::EmbeddingProvider>,
     mutation: impl FnOnce(&Path) -> Result<PathBuf, BookMutationError>,
 ) -> Result<BookMutationOutcome, CatalogMutationError> {
     let mut catalog = books.write().expect("Book catalog lock poisoned");
     let path = mutation(catalog.root())?;
-    let report =
-        rescan_and_sync_books(&mut catalog, memvid).map_err(CatalogMutationError::Internal)?;
+    let report = rescan_and_sync_books(&mut catalog, memvid, embedder)
+        .map_err(CatalogMutationError::Internal)?;
     drop(catalog);
     Ok(BookMutationOutcome { path, report })
+}
+
+fn load_document_source(
+    source: BookDocumentSource,
+    config: &DocumentImportConfig,
+) -> Result<(String, Vec<u8>), CatalogMutationError> {
+    match source {
+        BookDocumentSource::LocalPath { path } => {
+            let document = read_book_local_document(
+                Path::new(&path),
+                &config.allowed_roots,
+                config.max_file_bytes,
+            )?;
+            Ok((document.file_name, document.bytes))
+        }
+        BookDocumentSource::Base64 { file_name, content } => {
+            let encoded = if content.starts_with("data:") {
+                let (header, payload) = content.split_once(',').ok_or_else(|| {
+                    CatalogMutationError::Request("invalid Base64 data URL".to_owned())
+                })?;
+                if !header.ends_with(";base64") {
+                    return Err(CatalogMutationError::Request(
+                        "document data URL must use Base64 encoding".to_owned(),
+                    ));
+                }
+                payload
+            } else {
+                content.as_str()
+            };
+            let max_encoded_len = config
+                .max_file_bytes
+                .saturating_add(2)
+                .saturating_div(3)
+                .saturating_mul(4);
+            if encoded.len() > max_encoded_len {
+                return Err(CatalogMutationError::Request(format!(
+                    "Base64 document exceeds the {}-byte decoded limit",
+                    config.max_file_bytes
+                )));
+            }
+            let bytes = BASE64_STANDARD.decode(encoded).map_err(|error| {
+                CatalogMutationError::Request(format!("invalid Base64 document: {error}"))
+            })?;
+            Ok((file_name, bytes))
+        }
+    }
 }
 
 fn validate_chunks(chunks: &[String]) -> Result<(), String> {
@@ -268,11 +375,20 @@ const fn is_cjk(character: char) -> bool {
 impl MemvidService {
     /// 创建拥有指定内存存储、Skill 目录和电子书目录的服务。
     #[must_use]
-    pub fn new(memvid: Memvid, skills: SkillCatalog, books: BookCatalog) -> Self {
+    pub fn new(
+        memvid: Memvid,
+        memory_path: PathBuf,
+        skills: SkillCatalog,
+        books: BookCatalog,
+        document_import: DocumentImportConfig,
+        embedder: Option<SharedEmbedder>,
+    ) -> Self {
         Self {
-            memvid: Arc::new(Mutex::new(memvid)),
+            memvid: Arc::new(Mutex::new(MemvidSlot::new(memvid, memory_path))),
             skills: Arc::new(RwLock::new(skills)),
             books: Arc::new(RwLock::new(books)),
+            document_import: Arc::new(document_import),
+            embedder,
             tool_router: Self::tool_router(),
         }
     }
@@ -365,13 +481,14 @@ impl MemvidService {
                 );
             }
 
-            let mut memvid = memvid.lock().expect("Memvid lock poisoned");
+            let mut slot = memvid.lock().expect("Memvid lock poisoned");
+            let memory = slot.memory_mut()?;
             let mut output = String::new();
             for (score, name) in candidates {
                 let skill = catalog
                     .skill(&name)
                     .ok_or_else(|| format!("Skill disappeared from catalog: {name}"))?;
-                let (_, content) = load_resource(&mut memvid, &catalog, &name, None)
+                let (_, content) = load_resource(memory, &catalog, &name, None)
                     .map_err(|error| error.to_string())?;
                 let snippet: String = content.chars().take(500).collect();
                 writeln!(
@@ -385,6 +502,7 @@ impl MemvidService {
                 )
                 .expect("writing Skill matches to a String cannot fail");
             }
+            drop(slot);
             output.push_str(
                 "Next step: call load_skill for each relevant skill before changing code.",
             );
@@ -432,14 +550,12 @@ impl MemvidService {
             let resources = skill.file_paths().collect::<Vec<_>>().join(", ");
             let root = catalog.root().display().to_string();
 
-            let mut memvid = memvid.lock().expect("Memvid lock poisoned");
-            let (path, content) = load_resource(
-                &mut memvid,
-                &catalog,
-                &skill_name,
-                resource.as_deref(),
-            )
-            .map_err(|error| error.to_string())?;
+            let mut slot = memvid.lock().expect("Memvid lock poisoned");
+            let memory = slot.memory_mut()?;
+            let (path, content) =
+                load_resource(memory, &catalog, &skill_name, resource.as_deref())
+                    .map_err(|error| error.to_string())?;
+            drop(slot);
             let invocation = if automatic {
                 "automatic"
             } else {
@@ -600,13 +716,14 @@ impl MemvidService {
         for book in catalog.iter() {
             writeln!(
                 output,
-                "- {}\n  title: {}\n  description: {}\n  author: {}\n  entry: {}\n  resources: {}",
+                "- {}\n  title: {}\n  description: {}\n  author: {}\n  entry: {}\n  Markdown resources: {}\n  imported documents: {}",
                 book.name(),
                 book.title(),
                 book.description().unwrap_or("-"),
                 book.author().unwrap_or("-"),
                 book.entry_file(),
-                book.file_paths().collect::<Vec<_>>().join(", ")
+                book.file_paths().collect::<Vec<_>>().join(", "),
+                book.document_paths().collect::<Vec<_>>().join(", ")
             )
             .expect("writing Book list to a String cannot fail");
         }
@@ -651,13 +768,14 @@ impl MemvidService {
                 return Ok::<_, String>("No Book matched this query.".to_owned());
             }
 
-            let mut memvid = memvid.lock().expect("Memvid lock poisoned");
+            let mut slot = memvid.lock().expect("Memvid lock poisoned");
+            let memory = slot.memory_mut()?;
             let mut output = String::new();
             for (score, name) in candidates {
                 let book = catalog
                     .book(&name)
                     .ok_or_else(|| format!("Book disappeared from catalog: {name}"))?;
-                let (_, content) = load_book_resource(&mut memvid, &catalog, &name, None)
+                let (_, content) = load_book_resource(memory, &catalog, &name, None)
                     .map_err(|error| error.to_string())?;
                 let snippet: String = content.chars().take(500).collect();
                 writeln!(
@@ -673,6 +791,7 @@ impl MemvidService {
                 )
                 .expect("writing Book matches to a String cannot fail");
             }
+            drop(slot);
             output.push_str("Next step: call load_book for the selected book or chapter.");
             Ok(output)
         })
@@ -719,14 +838,12 @@ impl MemvidService {
             let resources = book.file_paths().collect::<Vec<_>>().join(", ");
             let root = catalog.root().display().to_string();
 
-            let mut memvid = memvid.lock().expect("Memvid lock poisoned");
-            let (path, content) = load_book_resource(
-                &mut memvid,
-                &catalog,
-                &book_name,
-                resource.as_deref(),
-            )
-            .map_err(|error| error.to_string())?;
+            let mut slot = memvid.lock().expect("Memvid lock poisoned");
+            let memory = slot.memory_mut()?;
+            let (path, content) =
+                load_book_resource(memory, &catalog, &book_name, resource.as_deref())
+                    .map_err(|error| error.to_string())?;
+            drop(slot);
             Ok::<_, String>(format!(
                 "<book name=\"{book_name}\" resource=\"{path}\">\nTitle: {title}\nDescription: {description}\nAuthor: {author}\nSource root: {root}\nAvailable resources: {resources}\n\n{content}\n</book>"
             ))
@@ -752,8 +869,9 @@ impl MemvidService {
     ) -> Result<CallToolResult, McpError> {
         let books = Arc::clone(&self.books);
         let memvid = Arc::clone(&self.memvid);
+        let embedder = self.embedder.clone();
         let outcome = task::spawn_blocking(move || {
-            mutate_book_catalog(&books, &memvid, |root| {
+            mutate_book_catalog(&books, &memvid, embedder.as_deref(), |root| {
                 create_book_file(root, &name, &content)
             })
         })
@@ -762,12 +880,15 @@ impl MemvidService {
         .map_err(CatalogMutationError::into_mcp_error)?;
 
         let output = format!(
-            "Added Book at {} and synchronized {} Books: written_parts={}, unchanged_parts={}, deleted_parts={}",
+            "Added Book at {} and synchronized {} Books: written_parts={}, unchanged_parts={}, deleted_parts={}, written_documents={}, unchanged_documents={}, deleted_documents={}",
             outcome.path.display(),
             outcome.report.book_count,
             outcome.report.written_parts,
             outcome.report.unchanged_parts,
-            outcome.report.deleted_parts
+            outcome.report.deleted_parts,
+            outcome.report.written_documents,
+            outcome.report.unchanged_documents,
+            outcome.report.deleted_documents
         );
         Ok(CallToolResult::success(vec![ContentBlock::text(output)]))
     }
@@ -786,8 +907,9 @@ impl MemvidService {
     ) -> Result<CallToolResult, McpError> {
         let books = Arc::clone(&self.books);
         let memvid = Arc::clone(&self.memvid);
+        let embedder = self.embedder.clone();
         let outcome = task::spawn_blocking(move || {
-            mutate_book_catalog(&books, &memvid, |root| {
+            mutate_book_catalog(&books, &memvid, embedder.as_deref(), |root| {
                 update_book_file(root, &name, &content)
             })
         })
@@ -796,12 +918,15 @@ impl MemvidService {
         .map_err(CatalogMutationError::into_mcp_error)?;
 
         let output = format!(
-            "Updated Book at {} and synchronized {} Books: written_parts={}, unchanged_parts={}, deleted_parts={}",
+            "Updated Book at {} and synchronized {} Books: written_parts={}, unchanged_parts={}, deleted_parts={}, written_documents={}, unchanged_documents={}, deleted_documents={}",
             outcome.path.display(),
             outcome.report.book_count,
             outcome.report.written_parts,
             outcome.report.unchanged_parts,
-            outcome.report.deleted_parts
+            outcome.report.deleted_parts,
+            outcome.report.written_documents,
+            outcome.report.unchanged_documents,
+            outcome.report.deleted_documents
         );
         Ok(CallToolResult::success(vec![ContentBlock::text(output)]))
     }
@@ -820,20 +945,81 @@ impl MemvidService {
     ) -> Result<CallToolResult, McpError> {
         let books = Arc::clone(&self.books);
         let memvid = Arc::clone(&self.memvid);
+        let embedder = self.embedder.clone();
         let outcome = task::spawn_blocking(move || {
-            mutate_book_catalog(&books, &memvid, |root| delete_book_directory(root, &name))
+            mutate_book_catalog(&books, &memvid, embedder.as_deref(), |root| {
+                delete_book_directory(root, &name)
+            })
         })
         .await
         .map_err(|error| internal(format!("delete_book worker failed: {error}")))?
         .map_err(CatalogMutationError::into_mcp_error)?;
 
         let output = format!(
-            "Deleted Book at {} and synchronized {} Books: written_parts={}, unchanged_parts={}, deleted_parts={}",
+            "Deleted Book at {} and synchronized {} Books: written_parts={}, unchanged_parts={}, deleted_parts={}, written_documents={}, unchanged_documents={}, deleted_documents={}",
             outcome.path.display(),
             outcome.report.book_count,
             outcome.report.written_parts,
             outcome.report.unchanged_parts,
-            outcome.report.deleted_parts
+            outcome.report.deleted_parts,
+            outcome.report.written_documents,
+            outcome.report.unchanged_documents,
+            outcome.report.deleted_documents
+        );
+        Ok(CallToolResult::success(vec![ContentBlock::text(output)]))
+    }
+
+    /// 上传 PDF 或 Office 文档并归档到指定电子书。
+    ///
+    /// # Errors
+    ///
+    /// 未指定现有 Book、输入来源不安全、Base64 或文档格式无效、提取/嵌入失败，或者同步失败时返回错误。
+    #[tool(
+        description = "Import one PDF, DOCX, PPTX, XLS, or XLSX document into an existing Book. book_name is mandatory. If the user has not explicitly named the destination Book, first call list_books and ask the user which Book should receive the upload; never guess or auto-select it. The source may be a local_path under document_import.allowed_roots or Base64 content. The server saves it under books/<book_name>/sources, runs the Memvid reader, extracts and enriches text, chunks it, optionally generates configured local ONNX or OpenAI embeddings, writes Smart Frames, and updates indexes."
+    )]
+    pub async fn import_book_document(
+        &self,
+        Parameters(ImportBookDocumentRequest { book_name, source }): Parameters<
+            ImportBookDocumentRequest,
+        >,
+    ) -> Result<CallToolResult, McpError> {
+        if book_name.trim().is_empty() {
+            return Err(invalid_params("book_name must not be empty"));
+        }
+
+        let books = Arc::clone(&self.books);
+        let memvid = Arc::clone(&self.memvid);
+        let config = Arc::clone(&self.document_import);
+        let embedder = self.embedder.clone();
+        let embedding_label = embedder.as_deref().map_or_else(
+            || "none (lexical index only)".to_owned(),
+            |provider| format!("{}:{}", provider.kind(), provider.model()),
+        );
+        let (outcome, inspection) = task::spawn_blocking(move || {
+            let (file_name, bytes) = load_document_source(source, &config)?;
+            let inspection = inspect_document(&file_name, &bytes, config.max_file_bytes)?;
+            let outcome = mutate_book_catalog(&books, &memvid, embedder.as_deref(), |root| {
+                store_book_document(root, &book_name, &file_name, &bytes, config.max_file_bytes)
+            })?;
+            Ok::<_, CatalogMutationError>((outcome, inspection))
+        })
+        .await
+        .map_err(|error| internal(format!("import_book_document worker failed: {error}")))?
+        .map_err(CatalogMutationError::into_mcp_error)?;
+
+        let output = format!(
+            "Imported document '{}' ({} bytes, {} extracted chars) into Book at {}. Pipeline completed: reader={}, fallback={}, warnings={}, enrichment, chunking, Smart Frame write, and index update. embedding={}; written_documents={}, unchanged_documents={}, deleted_documents={}",
+            inspection.file_name,
+            inspection.bytes,
+            inspection.extracted_chars,
+            outcome.path.display(),
+            inspection.reader_name,
+            inspection.fallback,
+            inspection.warnings.len(),
+            embedding_label,
+            outcome.report.written_documents,
+            outcome.report.unchanged_documents,
+            outcome.report.deleted_documents
         );
         Ok(CallToolResult::success(vec![ContentBlock::text(output)]))
     }
@@ -844,22 +1030,29 @@ impl MemvidService {
     ///
     /// 扫描、阻塞任务、Memvid 写入或提交失败时返回内部错误。
     #[tool(
-        description = "Rescan the configured books directory and incrementally synchronize added, changed, and deleted UTF-8 Markdown resources into the isolated Memvid books track."
+        description = "Rescan the configured books directory and incrementally synchronize added, changed, and deleted UTF-8 Markdown resources plus supported documents under each Book's sources directory into the isolated Memvid books track."
     )]
     pub async fn sync_books(&self) -> Result<CallToolResult, McpError> {
         let books = Arc::clone(&self.books);
         let memvid = Arc::clone(&self.memvid);
+        let embedder = self.embedder.clone();
         let report = task::spawn_blocking(move || {
             let mut catalog = books.write().expect("Book catalog lock poisoned");
-            rescan_and_sync_books(&mut catalog, &memvid)
+            rescan_and_sync_books(&mut catalog, &memvid, embedder.as_deref())
         })
         .await
         .map_err(|error| internal(format!("sync_books worker failed: {error}")))?
         .map_err(internal)?;
 
         let output = format!(
-            "Synchronized {} Books: written_parts={}, unchanged_parts={}, deleted_parts={}",
-            report.book_count, report.written_parts, report.unchanged_parts, report.deleted_parts
+            "Synchronized {} Books: written_parts={}, unchanged_parts={}, deleted_parts={}, written_documents={}, unchanged_documents={}, deleted_documents={}",
+            report.book_count,
+            report.written_parts,
+            report.unchanged_parts,
+            report.deleted_parts,
+            report.written_documents,
+            report.unchanged_documents,
+            report.deleted_documents
         );
         Ok(CallToolResult::success(vec![ContentBlock::text(output)]))
     }
@@ -880,22 +1073,22 @@ impl MemvidService {
 
         let memvid = Arc::clone(&self.memvid);
         let sequences = task::spawn_blocking(move || {
-            let mut memvid = memvid.lock().expect("Memvid lock poisoned");
-            let mut sequences = Vec::with_capacity(chunks.len());
+            let mut slot = memvid.lock().expect("Memvid lock poisoned");
+            slot.synchronize(|memory| {
+                let mut sequences = Vec::with_capacity(chunks.len());
 
-            for chunk in chunks {
-                let sequence = memvid
-                    .put_bytes(chunk.as_bytes())
-                    .map_err(|error| format!("put_bytes failed: {error}"))?;
-                sequences.push(sequence);
-            }
+                for chunk in chunks {
+                    let sequence = memory
+                        .put_bytes(chunk.as_bytes())
+                        .map_err(|error| format!("put_bytes failed: {error}"))?;
+                    sequences.push(sequence);
+                }
 
-            memvid
-                .commit()
-                .map_err(|error| format!("commit failed: {error}"))?;
-            drop(memvid);
-
-            Ok::<_, String>(sequences)
+                memory
+                    .commit()
+                    .map_err(|error| format!("commit failed: {error}"))?;
+                Ok(sequences)
+            })
         })
         .await
         .map_err(|error| internal(format!("add_chunks worker failed: {error}")))?
@@ -936,8 +1129,8 @@ impl MemvidService {
                 acl_enforcement_mode: memvid_core::AclEnforcementMode::default(),
             };
 
-            let mut memvid = memvid.lock().expect("Memvid lock poisoned");
-            memvid
+            let mut slot = memvid.lock().expect("Memvid lock poisoned");
+            slot.memory_mut()?
                 .search(search_request)
                 .map_err(|error| format!("search failed: {error}"))
         })
@@ -984,7 +1177,7 @@ impl ServerHandler for MemvidService {
                 r"
                 <memvid_mcp_server>
                     <overview>
-                        Model Context Protocol interface to Memvid memory, a development Skill catalog, and a personal Markdown electronic-book library. Before implementation, refactoring, review, debugging, architecture, UI, or documentation work, call find_skills with the task. Load every relevant result with load_skill before changing code. Use list_books, find_books, and load_book when the user asks about stored books. When a loaded Skill or Book references another resource, load that resource explicitly. Never auto-select a manual-only Skill; load it only when the user explicitly names or invokes it.</overview>
+                        Model Context Protocol interface to Memvid memory, a development Skill catalog, and a personal Markdown electronic-book library. Before implementation, refactoring, review, debugging, architecture, UI, or documentation work, call find_skills with the task. Load every relevant result with load_skill before changing code. Use list_books, find_books, and load_book when the user asks about stored books. Before calling import_book_document, require the user to explicitly choose the destination Book; if it is unspecified, call list_books and ask instead of guessing. When a loaded Skill or Book references another resource, load that resource explicitly. Never auto-select a manual-only Skill; load it only when the user explicitly names or invokes it.</overview>
                     <what_is_memvid>
                         Memvid stores knowledge as compressed Smart Frames in a single .mv2 file (like video stores frames). Provides: 10x storage efficiency, sub-5ms access, append-only crash-safe storage with time-travel, single portable file with data/embeddings/search/metadata, no external infrastructure needed
                     </what_is_memvid>
@@ -1047,6 +1240,10 @@ impl ServerHandler for MemvidService {
                             <purpose>Permanently delete a Book directory and remove it from Memvid</purpose>
                         </tool>
                         <tool>
+                            <name>import_book_document</name>
+                            <purpose>Import PDF or Office content into a user-selected Book through the Memvid ingestion pipeline</purpose>
+                        </tool>
+                        <tool>
                             <name>sync_books</name>
                             <purpose>Rescan the configured books directory and synchronize Memvid</purpose>
                         </tool>
@@ -1099,6 +1296,47 @@ mod tests {
         assert!(
             validate_chunks(&chunks).is_ok(),
             "non-empty chunks should pass validation"
+        );
+    }
+
+    #[test]
+    fn decodes_plain_and_data_url_document_uploads() {
+        let config = DocumentImportConfig {
+            max_file_bytes: 16,
+            allowed_roots: Vec::new(),
+        };
+        for content in ["aGVsbG8=", "data:application/pdf;base64,aGVsbG8="] {
+            let (file_name, bytes) = load_document_source(
+                BookDocumentSource::Base64 {
+                    file_name: "book.pdf".to_owned(),
+                    content: content.to_owned(),
+                },
+                &config,
+            )
+            .expect("valid Base64 should decode");
+            assert_eq!(file_name, "book.pdf");
+            assert_eq!(bytes, b"hello");
+        }
+    }
+
+    #[test]
+    fn rejects_oversized_base64_before_decoding() {
+        let config = DocumentImportConfig {
+            max_file_bytes: 2,
+            allowed_roots: Vec::new(),
+        };
+        let error = load_document_source(
+            BookDocumentSource::Base64 {
+                file_name: "book.pdf".to_owned(),
+                content: "aGVsbG8=".to_owned(),
+            },
+            &config,
+        )
+        .expect_err("oversized Base64 should be rejected");
+
+        assert!(
+            matches!(error, CatalogMutationError::Request(_)),
+            "unexpected error: {error:?}"
         );
     }
 

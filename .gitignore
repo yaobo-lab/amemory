@@ -1,25 +1,22 @@
-/target 
-*.log
-./logs
-logs
-define.rs
-/*.db
-/*.db-*
+/target
+Cargo.lock
 
-device_ca.pem
-device_private.key
-device.crt
+# Test files
+test_*.json
+continue_test.json
 
-/app/etc/settings/*.json
-/app/etc/mqtt/*.json
-app/src/define.rs
-./temp/*
-daemon.json
-.idea/workspace.xml
+# Runtime data
+*.mv2
+/logs/
+/uploads/*
+!/uploads/.gitkeep
 
-mqtt_reg_info.json
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
 
-uuid.json
-
-temp
-
+# OS
+.DS_Store
+Thumbs.db

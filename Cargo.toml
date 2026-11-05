@@ -8,8 +8,12 @@ license = "Apache-2.0"
 readme = "README.md"
 repository = "https://github.com/mystique09/memvid-mcp"
 
+[features]
+default = []
+local-embedding = ["memvid-core/vec"]
+
 [dependencies]
-memvid-core = "2.0.140"
+memvid-core = { version = "2.0.140", features = ["api_embed"] }
 rmcp = { version = "3.8.0", features = [
     "transport-io",
     "transport-streamable-http-server",
@@ -22,6 +26,7 @@ tokio = { version = "1.54.1", features = [
     "sync",
 ] }
 axum = "0.8"
+tower-http = { version = "0.6", features = ["limit"] }
 eyre = "0.6.14"
 color-eyre = "0.6.5"
 toolkit-rs = "1.0.31"
@@ -29,6 +34,8 @@ log = "0.4.35"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 schemars = "1.2.3"
+base64 = "0.22.1"
+blake3 = "1.8.2"
 
 [lints.rust]
 missing_docs = "warn"
