@@ -1,16 +1,15 @@
 //! 通过标准输入输出或 Streamable HTTP 运行 Memvid 模型上下文协议服务器。
 
-mod app;
-mod books;
-mod config;
-mod embedding;
-mod models;
-mod service;
-mod skills;
+#![expect(
+    unused_crate_dependencies,
+    reason = "the binary delegates application modules and their dependencies to the library crate"
+)]
+
 use toolkit_rs::{
     logger,
     painc::{PaincConf, set_panic_handler},
 };
+use xflash_mcp::{app, config};
 
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
