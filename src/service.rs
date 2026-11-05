@@ -398,9 +398,7 @@ impl MemvidService {
     /// # Errors
     ///
     /// 当前实现始终成功，不会返回错误。
-    #[tool(
-        description = "Health check tool - returns 'pong' to verify the MCP server is running and responsive"
-    )]
+    #[tool(description = "健康检查工具：返回“pong”，用于验证 MCP 服务器正在运行且能够正常响应。")]
     pub async fn ping(&self) -> Result<CallToolResult, McpError> {
         Ok(CallToolResult::success(vec![ContentBlock::text("pong")]))
     }
@@ -411,7 +409,7 @@ impl MemvidService {
     ///
     /// Skill 目录锁中毒时进程会终止；其他情况下始终成功。
     #[tool(
-        description = "List all development Skills stored in Memvid, including descriptions, entry files, resources, and whether each Skill may be selected automatically."
+        description = "列出存储在 Memvid 中的全部开发 Skill，包括说明、入口文件、资源，以及每个 Skill 是否允许自动选择。"
     )]
     pub async fn list_skills(&self) -> Result<CallToolResult, McpError> {
         let catalog = self.skills.read().expect("Skill catalog lock poisoned");
@@ -448,7 +446,7 @@ impl MemvidService {
     ///
     /// 任务为空或结果上限为零时返回参数无效错误；阻塞任务或 Memvid 检索失败时返回内部错误。
     #[tool(
-        description = "Find development Skills relevant to a task. Call this before implementation, refactoring, review, debugging, or documentation work, then call load_skill for every relevant result. Manual-only Skills are intentionally excluded and can only be loaded by explicit name."
+        description = "查找与任务相关的开发 Skill。在实施、重构、审查、调试或编写文档前调用此工具，然后为每个相关结果调用 load_skill。结果会排除仅限手动调用的 Skill；此类 Skill 只能通过明确指定名称来加载。"
     )]
     pub async fn find_skills(
         &self,
@@ -521,7 +519,7 @@ impl MemvidService {
     ///
     /// Skill/资源不存在、阻塞任务失败或 Memvid 帧无法读取时返回错误。
     #[tool(
-        description = "Load the complete instructions or a referenced resource for one named Skill from Memvid. Omit resource to load the entry file. Follow loaded instructions for the current task, and load referenced files on demand."
+        description = "从 Memvid 加载指定 Skill 的完整说明或引用资源。省略 resource 时加载入口文件。处理当前任务时必须遵循已加载的说明，并按需加载其中引用的文件。"
     )]
     pub async fn load_skill(
         &self,
@@ -578,7 +576,7 @@ impl MemvidService {
     ///
     /// 名称或文档无效、Skill 已存在、文件系统写入失败，或同步失败时返回错误。
     #[tool(
-        description = "Create a new Skill by writing a complete UTF-8 SKILL.md under the configured Skills directory, then rescan and synchronize it into Memvid. The name must use lowercase letters, digits, and single hyphens, and must match frontmatter.name. Fails if the Skill already exists."
+        description = "在配置的 Skill 目录下写入完整的 UTF-8 SKILL.md，以创建新 Skill，然后重新扫描并同步到 Memvid。名称只能包含小写字母、数字和单个连字符，并且必须与 frontmatter.name 一致。如果 Skill 已存在，则操作失败。"
     )]
     pub async fn add_skill(
         &self,
@@ -612,7 +610,7 @@ impl MemvidService {
     ///
     /// 名称或文档无效、Skill 不存在、文件系统写入失败，或同步失败时返回错误。
     #[tool(
-        description = "Replace an existing Skill's complete UTF-8 SKILL.md while preserving its other resource files, then rescan and synchronize the change into Memvid. The requested name must match frontmatter.name."
+        description = "完整替换现有 Skill 的 UTF-8 SKILL.md，同时保留其他资源文件，然后重新扫描并将变更同步到 Memvid。请求的名称必须与 frontmatter.name 一致。"
     )]
     pub async fn update_skill(
         &self,
@@ -646,7 +644,7 @@ impl MemvidService {
     ///
     /// 名称无效、Skill 不存在、目录删除失败，或同步失败时返回错误。
     #[tool(
-        description = "Permanently delete one existing Skill directory, including SKILL.md and all supporting resources, then rescan the configured directory and remove its frames from Memvid."
+        description = "永久删除现有 Skill 目录，包括 SKILL.md 和全部配套资源；随后重新扫描配置目录，并从 Memvid 中移除对应帧。"
     )]
     pub async fn delete_skill(
         &self,
@@ -678,7 +676,7 @@ impl MemvidService {
     ///
     /// 扫描、阻塞任务、Memvid 写入或提交失败时返回内部错误。
     #[tool(
-        description = "Rescan the configured Skills directory and incrementally synchronize added, changed, and deleted UTF-8 Skill resources into Memvid."
+        description = "重新扫描配置的 Skill 目录，并将新增、变更和删除的 UTF-8 Skill 资源增量同步到 Memvid。"
     )]
     pub async fn sync_skills(&self) -> Result<CallToolResult, McpError> {
         let skills = Arc::clone(&self.skills);
@@ -704,7 +702,7 @@ impl MemvidService {
     ///
     /// Book 目录锁中毒时进程会终止；其他情况下始终成功。
     #[tool(
-        description = "List all Markdown electronic books stored in the configured books directory, including stable names, titles, descriptions, authors, entry files, and Markdown resources."
+        description = "列出配置的书籍目录中存储的全部 Markdown 电子书，包括稳定名称、标题、简介、作者、入口文件和 Markdown 资源。"
     )]
     pub async fn list_books(&self) -> Result<CallToolResult, McpError> {
         let catalog = self.books.read().expect("Book catalog lock poisoned");
@@ -738,7 +736,7 @@ impl MemvidService {
     ///
     /// 查询为空、结果上限为零、阻塞任务失败或 Memvid 读取失败时返回错误。
     #[tool(
-        description = "Find Markdown electronic books relevant to a query by matching book names, titles, descriptions, and authors. Returns metadata and a short Memvid snippet; call load_book to read the selected book or chapter."
+        description = "通过匹配书籍名称、标题、简介和作者，查找与查询相关的 Markdown 电子书。返回元数据和简短的 Memvid 内容片段；调用 load_book 可读取选中的书籍或章节。"
     )]
     pub async fn find_books(
         &self,
@@ -808,7 +806,7 @@ impl MemvidService {
     ///
     /// Book/资源不存在、阻塞任务失败或 Memvid 帧无法读取时返回错误。
     #[tool(
-        description = "Load the complete BOOK.md or one referenced Markdown resource for a named electronic book from Memvid. Omit resource to load BOOK.md; use a path returned by list_books to load a chapter."
+        description = "从 Memvid 加载指定电子书的完整 BOOK.md 或某个引用的 Markdown 资源。省略 resource 时加载 BOOK.md；如需加载章节，请使用 list_books 返回的路径。"
     )]
     pub async fn load_book(
         &self,
@@ -861,7 +859,7 @@ impl MemvidService {
     ///
     /// 名称或文档无效、Book 已存在、文件系统写入失败，或同步失败时返回错误。
     #[tool(
-        description = "Create a Markdown electronic book by writing a complete UTF-8 BOOK.md under the configured books directory, then rescan and synchronize it into the isolated Memvid books track. Fails if the Book already exists."
+        description = "在配置的书籍目录下写入完整的 UTF-8 BOOK.md，以创建 Markdown 电子书，然后重新扫描并同步到独立的 Memvid 书籍轨道。如果书籍已存在，则操作失败。"
     )]
     pub async fn add_book(
         &self,
@@ -899,7 +897,7 @@ impl MemvidService {
     ///
     /// 名称或文档无效、Book 不存在、文件系统写入失败，或同步失败时返回错误。
     #[tool(
-        description = "Replace an existing electronic book's complete UTF-8 BOOK.md while preserving chapter Markdown files, then rescan and synchronize the change into Memvid."
+        description = "完整替换现有电子书的 UTF-8 BOOK.md，同时保留章节 Markdown 文件，然后重新扫描并将变更同步到 Memvid。"
     )]
     pub async fn update_book(
         &self,
@@ -937,7 +935,7 @@ impl MemvidService {
     ///
     /// 名称无效、Book 不存在、目录删除失败，或同步失败时返回错误。
     #[tool(
-        description = "Permanently delete one electronic book directory, including BOOK.md and every chapter or supporting file, then remove its book:// frames from Memvid."
+        description = "永久删除一个电子书目录，包括 BOOK.md、全部章节和配套文件，然后从 Memvid 中移除对应的 book:// 帧。"
     )]
     pub async fn delete_book(
         &self,
@@ -975,7 +973,7 @@ impl MemvidService {
     ///
     /// 未指定现有 Book、输入来源不安全、Base64 或文档格式无效、提取/嵌入失败，或者同步失败时返回错误。
     #[tool(
-        description = "Import one PDF, DOCX, PPTX, XLS, or XLSX document into an existing Book. book_name is mandatory. If the user has not explicitly named the destination Book, first call list_books and ask the user which Book should receive the upload; never guess or auto-select it. The source may be a local_path under document_import.allowed_roots or Base64 content. The server saves it under books/<book_name>/sources, runs the Memvid reader, extracts and enriches text, chunks it, optionally generates configured local ONNX or OpenAI embeddings, writes Smart Frames, and updates indexes."
+        description = "将一个 PDF、DOCX、PPTX、XLS 或 XLSX 文档导入现有电子书。book_name 为必填项。如果用户没有明确指定目标书籍，请先调用 list_books，并询问用户应将文档上传到哪本书；不得猜测或自动选择。来源可以是 document_import.allowed_roots 下的 local_path，也可以是 Base64 内容。服务器会将文档保存到 books/<book_name>/sources，运行 Memvid 阅读器，提取并增强文本、执行分块、按配置选择性生成本地 ONNX 或 OpenAI 嵌入、写入 Smart Frames，并更新索引。"
     )]
     pub async fn import_book_document(
         &self,
@@ -1030,7 +1028,7 @@ impl MemvidService {
     ///
     /// 扫描、阻塞任务、Memvid 写入或提交失败时返回内部错误。
     #[tool(
-        description = "Rescan the configured books directory and incrementally synchronize added, changed, and deleted UTF-8 Markdown resources plus supported documents under each Book's sources directory into the isolated Memvid books track."
+        description = "重新扫描配置的书籍目录，并将新增、变更和删除的 UTF-8 Markdown 资源，以及每本书 sources 目录下受支持的文档，增量同步到独立的 Memvid 书籍轨道。"
     )]
     pub async fn sync_books(&self) -> Result<CallToolResult, McpError> {
         let books = Arc::clone(&self.books);
@@ -1063,7 +1061,7 @@ impl MemvidService {
     ///
     /// 请求为空或包含空白文本块时返回参数无效错误；阻塞任务、写入或提交失败时返回内部错误。
     #[tool(
-        description = "Store text chunks as memory frames in Memvid. Each chunk is encoded with semantic embeddings and appended to the .mv2 file in a crash-safe, append-only format. Returns the number of inserted chunks and their sequence IDs for reference."
+        description = "将文本块作为记忆帧存储到 Memvid。每个文本块都会生成语义嵌入，并以崩溃安全的仅追加格式写入 .mv2 文件。返回已插入的文本块数量及其序列 ID，以供后续引用。"
     )]
     pub async fn add_chunks(
         &self,
@@ -1106,7 +1104,7 @@ impl MemvidService {
     /// # Errors
     ///
     /// 查询为空或结果数量限制为零时返回参数无效错误；阻塞任务或检索失败时返回内部错误。
-    #[tool(description = "Search")]
+    #[tool(description = "使用自然语言查询检索 Memvid 中存储的通用记忆文本块。")]
     pub async fn search(
         &self,
         Parameters(request): Parameters<SearchToolRequest>,
@@ -1177,87 +1175,87 @@ impl ServerHandler for MemvidService {
                 r"
                 <memvid_mcp_server>
                     <overview>
-                        Model Context Protocol interface to Memvid memory, a development Skill catalog, and a personal Markdown electronic-book library. Before implementation, refactoring, review, debugging, architecture, UI, or documentation work, call find_skills with the task. Load every relevant result with load_skill before changing code. Use list_books, find_books, and load_book when the user asks about stored books. Before calling import_book_document, require the user to explicitly choose the destination Book; if it is unspecified, call list_books and ask instead of guessing. When a loaded Skill or Book references another resource, load that resource explicitly. Never auto-select a manual-only Skill; load it only when the user explicitly names or invokes it.</overview>
+                        这是 Memvid 记忆、开发 Skill 目录和个人 Markdown 电子书库的模型上下文协议接口。在实施、重构、审查、调试、架构、UI 或文档工作前，使用当前任务调用 find_skills。修改代码前，必须通过 load_skill 加载每个相关结果。当用户询问已存储的书籍时，使用 list_books、find_books 和 load_book。调用 import_book_document 前，必须让用户明确选择目标书籍；如果尚未指定，请调用 list_books 并询问用户，不得猜测。当已加载的 Skill 或书籍引用其他资源时，必须明确加载该资源。不得自动选择仅限手动调用的 Skill；只有用户明确指定名称或调用时才能加载。</overview>
                     <what_is_memvid>
-                        Memvid stores knowledge as compressed Smart Frames in a single .mv2 file (like video stores frames). Provides: 10x storage efficiency, sub-5ms access, append-only crash-safe storage with time-travel, single portable file with data/embeddings/search/metadata, no external infrastructure needed
+                        Memvid 将知识作为压缩 Smart Frames 存储在单个 .mv2 文件中，类似视频存储帧。它提供约 10 倍的存储效率、低于 5 毫秒的访问速度、支持时间回溯且崩溃安全的仅追加存储；数据、嵌入、搜索索引和元数据都包含在单个可移植文件中，无需外部基础设施。
                     </what_is_memvid>
                     <tools>
                         <tool>
                             <name>ping</name>
-                            <purpose>Health check</purpose>
-                            <returns>'pong'</returns>
+                            <purpose>执行健康检查</purpose>
+                            <returns>返回“pong”</returns>
                         </tool>
                         <tool>
                             <name>list_skills</name>
-                            <purpose>List all Skills, invocation policies, entry files, and resources</purpose>
+                            <purpose>列出全部 Skill、调用策略、入口文件和资源</purpose>
                         </tool>
                         <tool>
                             <name>find_skills</name>
-                            <purpose>Match the current development task to automatically invocable Skills</purpose>
+                            <purpose>为当前开发任务匹配可自动调用的 Skill</purpose>
                         </tool>
                         <tool>
                             <name>load_skill</name>
-                            <purpose>Load complete Skill instructions or a referenced resource from Memvid</purpose>
+                            <purpose>从 Memvid 加载完整的 Skill 说明或引用资源</purpose>
                         </tool>
                         <tool>
                             <name>add_skill</name>
-                            <purpose>Create a validated SKILL.md and synchronize it into Memvid</purpose>
+                            <purpose>创建通过校验的 SKILL.md 并同步到 Memvid</purpose>
                         </tool>
                         <tool>
                             <name>update_skill</name>
-                            <purpose>Replace an existing SKILL.md and synchronize the change</purpose>
+                            <purpose>替换现有 SKILL.md 并同步变更</purpose>
                         </tool>
                         <tool>
                             <name>delete_skill</name>
-                            <purpose>Permanently delete a Skill directory and remove it from Memvid</purpose>
+                            <purpose>永久删除 Skill 目录并从 Memvid 中移除</purpose>
                         </tool>
                         <tool>
                             <name>sync_skills</name>
-                            <purpose>Rescan the configured Skill directory and synchronize Memvid</purpose>
+                            <purpose>重新扫描配置的 Skill 目录并同步到 Memvid</purpose>
                         </tool>
                         <tool>
                             <name>list_books</name>
-                            <purpose>List all Markdown electronic books and resources</purpose>
+                            <purpose>列出全部 Markdown 电子书及其资源</purpose>
                         </tool>
                         <tool>
                             <name>find_books</name>
-                            <purpose>Match a query to book metadata and a content snippet</purpose>
+                            <purpose>根据查询匹配书籍元数据和内容片段</purpose>
                         </tool>
                         <tool>
                             <name>load_book</name>
-                            <purpose>Load BOOK.md or a chapter resource from Memvid</purpose>
+                            <purpose>从 Memvid 加载 BOOK.md 或章节资源</purpose>
                         </tool>
                         <tool>
                             <name>add_book</name>
-                            <purpose>Create a validated BOOK.md and synchronize it into Memvid</purpose>
+                            <purpose>创建通过校验的 BOOK.md 并同步到 Memvid</purpose>
                         </tool>
                         <tool>
                             <name>update_book</name>
-                            <purpose>Replace BOOK.md while preserving chapters and synchronize it</purpose>
+                            <purpose>替换 BOOK.md、保留章节并同步变更</purpose>
                         </tool>
                         <tool>
                             <name>delete_book</name>
-                            <purpose>Permanently delete a Book directory and remove it from Memvid</purpose>
+                            <purpose>永久删除电子书目录并从 Memvid 中移除</purpose>
                         </tool>
                         <tool>
                             <name>import_book_document</name>
-                            <purpose>Import PDF or Office content into a user-selected Book through the Memvid ingestion pipeline</purpose>
+                            <purpose>通过 Memvid 导入管线将 PDF 或 Office 内容导入用户选定的电子书</purpose>
                         </tool>
                         <tool>
                             <name>sync_books</name>
-                            <purpose>Rescan the configured books directory and synchronize Memvid</purpose>
+                            <purpose>重新扫描配置的书籍目录并同步到 Memvid</purpose>
                         </tool>
                         <tool>
                             <name>add_chunks</name>
-                            <purpose>Store general text chunks as memory frames</purpose>
+                            <purpose>将通用文本块存储为记忆帧</purpose>
                         </tool>
                         <tool>
                             <name>search</name>
-                            <purpose>Query general memory using natural language</purpose>
+                            <purpose>使用自然语言查询通用记忆</purpose>
                         </tool>
                     </tools>
-                    <use_cases>Agent long-term memory, enterprise knowledge bases, offline AI systems, codebase understanding, personal knowledge, auditable AI workflows</use_cases>
-                    <storage>All data in memvid.mv2 - single portable file with compressed frames, full-text index, vector index, timeline metadata. Shareable, versionable, backup-friendly</storage>
+                    <use_cases>Agent 长期记忆、企业知识库、离线 AI 系统、代码库理解、个人知识管理和可审计的 AI 工作流</use_cases>
+                    <storage>全部数据存储在 memvid.mv2 中；该文件是包含压缩帧、全文索引、向量索引和时间线元数据的单个可移植文件，便于共享、版本管理和备份。</storage>
                 </memvid_mcp_server>",
             )
     }
