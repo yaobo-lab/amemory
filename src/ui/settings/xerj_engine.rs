@@ -7,6 +7,7 @@ use super::{setting_row, settings_group};
 use crate::state::app::AppStore;
 use crate::ui::theme::ClippiTheme;
 
+/// Render Tab 3: XERJ search engine configuration and index maintenance.
 pub fn render_xerj_tab(
     _store: AppStore,
     theme: ClippiTheme,

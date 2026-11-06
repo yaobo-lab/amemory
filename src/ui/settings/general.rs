@@ -9,6 +9,7 @@ use crate::ui::components::slider::stepped_slider;
 use crate::ui::components::toggle::render_toggle;
 use crate::ui::theme::ClippiTheme;
 
+/// Render Tab 1: General appearance and behavior settings.
 pub fn render_general_tab(store: AppStore, theme: ClippiTheme) -> impl IntoElement {
     let settings = store.settings;
     let accent = theme.accent;

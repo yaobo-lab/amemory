@@ -8,6 +8,7 @@ use super::theme::ClippiTheme;
 use crate::core::types::KnowledgeItem;
 use crate::state::app::AppStore;
 
+/// Render tag assignment modal dialog.
 pub fn tag_picker_view(
     _store: AppStore,
     item: KnowledgeItem,

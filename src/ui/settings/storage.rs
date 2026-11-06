@@ -8,6 +8,7 @@ use crate::state::app::AppStore;
 use crate::ui::components::toggle::render_toggle;
 use crate::ui::theme::ClippiTheme;
 
+/// Render Tab 2: Storage paths and boundary settings.
 pub fn render_storage_tab(_store: AppStore, theme: ClippiTheme) -> impl IntoElement {
     let text_1 = theme.text_1;
     let card_bg = theme.card_bg;

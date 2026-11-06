@@ -8,6 +8,7 @@ use crate::services::update::UpdatePhase;
 use crate::state::app::AppStore;
 use crate::ui::theme::ClippiTheme;
 
+/// Render Tab 6: About & version update with progress bar.
 pub fn render_version_tab(
     store: AppStore,
     theme: ClippiTheme,

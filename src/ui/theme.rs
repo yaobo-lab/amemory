@@ -1,4 +1,4 @@
-﻿//! Theme tokens and geometry constants replicating Clippi 1:1.
+//! Theme tokens and geometry constants replicating Clippi 1:1.
 
 use nsh_core::prelude::*;
 
@@ -9,7 +9,9 @@ pub const PANEL_RADIUS: f32 = 12.0;
 
 /// Default transition durations in milliseconds.
 pub const VIEW_ANIM_MS: u64 = 180;
+/// Duration for toast popup transition in milliseconds.
 pub const TOAST_ANIM_MS: u64 = 220;
+/// Duration for button expand animation in milliseconds.
 pub const BTN_EXPAND_MS: u64 = 240;
 
 /// Complete color palette for dark and light modes.

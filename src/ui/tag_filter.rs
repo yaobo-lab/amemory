@@ -7,6 +7,7 @@ use super::components::modal_overlay::modal_overlay_view;
 use super::theme::ClippiTheme;
 use crate::state::app::AppStore;
 
+/// Render tag filter modal dialog.
 pub fn tag_filter_view(
     store: AppStore,
     theme: ClippiTheme,

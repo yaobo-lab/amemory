@@ -28,8 +28,11 @@ pub enum ActiveView {
 /// Modal confirmation dialog payload.
 #[derive(Clone)]
 pub struct ConfirmDialogData {
+    /// Dialog title.
     pub title: String,
+    /// Dialog description/message text.
     pub message: String,
+    /// Action invoked when confirmed.
     pub on_confirm: Arc<dyn Fn() + Send + Sync>,
 }
 
@@ -51,8 +54,11 @@ impl PartialEq for ConfirmDialogData {
 /// Floating Toast notification.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ToastNotification {
+    /// Notification ID.
     pub id: u64,
+    /// Notification message text.
     pub message: String,
+    /// Whether this is an error notification.
     pub is_error: bool,
 }
 

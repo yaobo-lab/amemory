@@ -15,6 +15,7 @@ pub mod mcp_hotkey;
 pub mod data_logger;
 pub mod version;
 
+/// Total number of tabs in the settings panel.
 pub const SETTINGS_TAB_COUNT: usize = 6;
 
 /// Reusable settings group container matching Clippi 1:1.
