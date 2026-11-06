@@ -11,7 +11,7 @@ local-embedding = ["memvid-core/vec"]
 
 [dependencies]
 memvid-core = { version = "2.0.140", features = ["api_embed"] }
-rmcp = { version = "3.8.0", features = [
+rmcp = { version = "3.9.0", features = [
     "transport-io",
     "transport-streamable-http-server",
 ] }
