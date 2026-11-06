@@ -1,6 +1,11 @@
 //! Application startup, catalog synchronization, and runtime mode orchestration for Amemory.
 
 pub mod config;
+pub mod core;
+pub mod platform;
+pub mod services;
+pub mod state;
+pub mod ui;
 
 use std::sync::Arc;
 
@@ -100,6 +105,19 @@ pub async fn run(config: AppConfig) -> Result<()> {
                 scanned_books,
             )
             .await
+        }
+        ServerMode::Gui => {
+            let rt = Arc::new(services::amemory_runtime::AmemoryRuntime::with_components(
+                Arc::new(config.clone()),
+                adapter.clone(),
+                Arc::new(skills_catalog),
+                Arc::new(books_catalog),
+            ));
+            let mut mcp_handle = services::mcp_controller::McpController::new();
+            let _ = mcp_handle.start(rt.clone());
+            ui::run_gui(rt, config.clone());
+            mcp_handle.stop();
+            Ok(())
         }
     }
 }

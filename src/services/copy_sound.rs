@@ -1,9 +1,8 @@
-//! Sound feedback service — plays subtle auditory confirmations for copy/action events.
+//! Embedded WAV feedback sounds and Win32 `PlaySoundW` playback.
 
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-/// Embedded WAV sound effects.
 const SOUND_PENCLICK: &[u8] = include_bytes!("../../assets/copy_penclick.wav");
 const SOUND_KACHA: &[u8] = include_bytes!("../../assets/copy_kacha.wav");
 const SOUND_BLIP: &[u8] = include_bytes!("../../assets/copy_blip.wav");
@@ -11,21 +10,18 @@ const SOUND_BUBBLE: &[u8] = include_bytes!("../../assets/copy_bubble.wav");
 const SOUND_CLACK: &[u8] = include_bytes!("../../assets/copy_clack.wav");
 const SOUND_MECHKB: &[u8] = include_bytes!("../../assets/copy_mechkb.wav");
 
-/// Available sound effects.
-pub const SOUND_LIST: &[(&str, &str)] = &[
-    ("copy_kacha.wav", "咔嚓 (默认)"),
-    ("copy_penclick.wav", "按动笔"),
-    ("copy_clack.wav", "清脆键盘"),
-    ("copy_mechkb.wav", "机械键盘"),
-    ("copy_blip.wav", "小啾啾"),
-    ("copy_bubble.wav", "泡泡"),
-];
-
-/// Default sound effect file.
-pub const DEFAULT_SOUND: &str = "copy_kacha.wav";
-
 static LAST_PLAY: Mutex<Option<Instant>> = Mutex::new(None);
-const PLAY_DEBOUNCE: Duration = Duration::from_millis(150);
+const PLAY_DEBOUNCE: Duration = Duration::from_millis(60);
+
+/// All available sound options.
+pub const AVAILABLE_SOUNDS: [&str; 6] = [
+    "copy_penclick.wav",
+    "copy_kacha.wav",
+    "copy_blip.wav",
+    "copy_bubble.wav",
+    "copy_clack.wav",
+    "copy_mechkb.wav",
+];
 
 /// Look up embedded sound bytes by filename.
 #[must_use]
@@ -41,8 +37,21 @@ pub fn get_sound_data(filename: &str) -> Option<&'static [u8]> {
     }
 }
 
-/// Play audio feedback for a copy or completion event.
-pub fn play_copy_sound(filename: &str) {
+/// Play audio feedback by numeric index (1..=5).
+pub fn play_copy_sound(index: usize) {
+    let name = match index {
+        1 => "copy_penclick.wav",
+        2 => "copy_kacha.wav",
+        3 => "copy_blip.wav",
+        4 => "copy_bubble.wav",
+        5 => "copy_clack.wav",
+        _ => "copy_mechkb.wav",
+    };
+    play_copy_sound_name(name);
+}
+
+/// Play audio feedback by filename.
+pub fn play_copy_sound_name(filename: &str) {
     if let Ok(mut last) = LAST_PLAY.lock() {
         let now = Instant::now();
         if let Some(prev) = *last {

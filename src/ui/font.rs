@@ -1,4 +1,4 @@
-//! Scaled font size calculation helpers.
+﻿//! Scaled font size calculation helpers.
 
 use nsh_core::geometry::Points;
 

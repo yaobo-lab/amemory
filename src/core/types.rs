@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Knowledge category shown in the type filter bar and on card badges.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ItemKind {
     /// A Skill (`SKILL.md`).
@@ -13,6 +13,7 @@ pub enum ItemKind {
     /// An imported document stored inside a Book (`files/imports/...`).
     Document,
     /// A general memory chunk (`memory://...`).
+    #[default]
     Memory,
     /// A script or code file (`scripts/...`).
     Script,
@@ -78,7 +79,7 @@ impl ItemKind {
 }
 
 /// A single row in the knowledge list (Clippi's "clipboard card" equivalent).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct KnowledgeItem {
     /// Unique document or entity identifier.
     pub id: String,
@@ -90,6 +91,15 @@ pub struct KnowledgeItem {
     pub uri: String,
     /// Text preview or search snippet.
     pub preview: String,
+    /// Full content of the knowledge item.
+    #[serde(default)]
+    pub content: String,
+    /// Optional description.
+    #[serde(default)]
+    pub description: Option<String>,
+    /// Optional source file path.
+    #[serde(default)]
+    pub source_path: Option<String>,
     /// Tags attached to the item.
     pub tags: Vec<String>,
     /// Owning Skill/Book name or memory namespace.
@@ -108,6 +118,9 @@ pub struct KnowledgeItem {
     pub updated_at: Option<String>,
     /// Whether the user marked this item as favorite.
     pub favorite: bool,
+    /// Alias for favorite.
+    #[serde(default)]
+    pub is_favorite: bool,
 }
 
 impl KnowledgeItem {
@@ -161,6 +174,18 @@ pub struct StatsSnapshot {
     pub total_docs: u64,
     /// On-disk size of the XERJ data directory in bytes.
     pub disk_usage_bytes: u64,
+    /// XERJ segment count.
+    #[serde(default)]
+    pub segments: usize,
+    /// Total doc count alias.
+    #[serde(default)]
+    pub doc_count: u64,
+    /// P95 query latency in milliseconds.
+    #[serde(default)]
+    pub p95_latency_ms: f32,
+    /// Memory count.
+    #[serde(default)]
+    pub memory_count: usize,
     /// Current embedding mode.
     pub embed_mode: String,
     /// Latency of the most recent search in milliseconds.

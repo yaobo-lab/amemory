@@ -1,6 +1,6 @@
 //! System tray notification icon and context menu.
 
-use nsh_core::element::desktop::{MenuItem, MenuRole, order_front, quit, set_application_menu};
+use nsh_core::element::desktop::{MenuItem, order_front, set_application_menu};
 
 use crate::core::i18n_keys::I18nKey;
 
@@ -11,7 +11,8 @@ pub fn configure_desktop_menus() {
         vec![
             MenuItem::new(I18nKey::TrayShow.text()).on_select(order_front),
             MenuItem::separator(),
-            MenuItem::role(MenuRole::Quit).label(I18nKey::TrayQuit.text()).on_select(quit),
+            MenuItem::new(I18nKey::TrayQuit.text())
+                .on_select(|| std::process::exit(0)),
         ],
     );
 

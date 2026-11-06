@@ -1,6 +1,6 @@
 //! Update checker resolving releases from GitHub Releases or custom mirror.
 
-use chrono::{DateTime, Duration as ChronoDuration, Utc};
+use toolkit_rs::chrono::{DateTime, Duration as ChronoDuration, Utc};
 use serde::Deserialize;
 
 use crate::core::i18n_keys::I18nKey;
@@ -61,7 +61,7 @@ pub enum UpdateSource {
 }
 
 /// Phase of the update process for UI display.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum UpdatePhase {
     /// Idle / no active check.
     Idle,
@@ -69,12 +69,14 @@ pub enum UpdatePhase {
     Checking,
     /// Already running the latest version.
     UpToDate,
+    /// Newer version discovered with info.
+    Available(UpdateInfo),
     /// Newer version discovered.
     UpdateAvailable,
     /// Downloading installer binary.
     Downloading {
-        /// Download progress 0..=100.
-        progress: u8,
+        /// Download progress 0.0..=1.0.
+        progress: f32,
     },
     /// Verifying file checksum.
     Verifying,
@@ -114,7 +116,7 @@ pub fn is_safe_asset_name(name: &str) -> bool {
 pub fn open_releases_page(url: &str) {
     #[cfg(target_os = "windows")]
     {
-        use std::os::windows::ffi::OsStrExt;
+        
         use windows_sys::Win32::UI::Shell::ShellExecuteW;
         use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 

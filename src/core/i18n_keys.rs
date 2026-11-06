@@ -25,6 +25,7 @@ define_i18n! {
     FilterScript: ("脚本", "Scripts"),
     FilterNote: ("笔记/参考", "Notes"),
     FilterTagButton: ("标签筛选", "Filter Tags"),
+    SettingFilterTypes: ("快捷标签配置", "Filter Types Config"),
 
     // ── Stats Overview ──
     StatsTitle: ("系统运行概览", "System Overview"),
@@ -67,6 +68,7 @@ define_i18n! {
     EditNamespace: ("命名空间", "Namespace"),
     EditTags: ("标签 (逗号分隔)", "Tags (comma separated)"),
     EditContent: ("正文 Markdown / 内容", "Markdown Content / Text"),
+    EditContentPlaceholder: ("输入正文内容或 Markdown 片段...", "Enter content or markdown..."),
     EditPreview: ("实时预览", "Live Preview"),
     EditSave: ("保存并同步", "Save & Sync"),
     EditCancel: ("取消", "Cancel"),
@@ -83,12 +85,19 @@ define_i18n! {
 
     // ── Settings Window ──
     SettingsTitle: ("系统设置", "Settings"),
+    SettingHeaderTitle: ("系统设置", "Settings"),
     TabGeneral: ("通用", "General"),
+    SettingTabGeneral: ("通用", "General"),
     TabStorage: ("知识库与存储", "Storage & Catalog"),
+    SettingTabStorage: ("知识库与存储", "Storage & Catalog"),
     TabXerj: ("检索引擎", "XERJ Engine"),
+    SettingTabXerj: ("检索引擎", "XERJ Engine"),
     TabMcpHotkey: ("服务与热键", "Server & Hotkey"),
+    SettingTabMcp: ("服务与热键", "Server & Hotkey"),
     TabDataLogger: ("数据与日志", "Data & Logs"),
+    SettingTabData: ("数据与日志", "Data & Logs"),
     TabVersion: ("版本与更新", "Version & Updates"),
+    SettingTabVersion: ("版本与更新", "Version & Updates"),
 
     // ── General Settings ──
     ThemeMode: ("主题模式", "Theme Mode"),
@@ -187,4 +196,8 @@ define_i18n! {
     ToastSyncFailed: ("同步失败: {0}", "Sync failed: {0}"),
     ToastConfigSaved: ("配置已更新并保存至 etc/config.toml", "Config saved to etc/config.toml"),
     ToastActionFailed: ("操作失败: {0}", "Action failed: {0}"),
+
+    // ── System Tray ──
+    TrayShow: ("显示主窗口", "Show Main Window"),
+    TrayQuit: ("退出 Amemory", "Quit Amemory"),
 }

@@ -1,4 +1,4 @@
-//! Static assets: font glyphs, icons, and image definitions.
+﻿//! Static assets: font glyphs, icons, and image definitions.
 
 /// Common icon glyph unicode characters defined in iconfont.ttf.
 pub mod glyphs {
@@ -48,6 +48,8 @@ pub mod glyphs {
     pub const SCRIPT: &str = "\u{e63b}";
     /// Note reference icon
     pub const NOTE: &str = "\u{e632}";
+    /// All categories icon
+    pub const ALL: &str = "\u{e68c}";
     /// Stats chart icon
     pub const STATS: &str = "\u{e64a}";
 }

@@ -1,9 +1,6 @@
 //! Server runtime state and background service metrics.
 
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 
-use serde::{Deserialize, Serialize};
 
 use crate::core::types::StatsSnapshot;
 use crate::services::update::UpdatePhase;

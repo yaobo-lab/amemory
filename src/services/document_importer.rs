@@ -16,7 +16,7 @@ pub async fn import_document_to_book(
 ) -> Result<()> {
     let books_catalog = BookCatalog::new(&runtime.config().storage.books);
     let book = books_catalog
-        .get_book(book_name)
+        .load_book(book_name)
         .wrap_err_with(|| format!("未找到目标书籍 `{book_name}`"))?;
 
     // Domain document import: inspect, extract text, store into files/imports/ and append chapter

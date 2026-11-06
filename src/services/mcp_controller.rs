@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use domain::book::BookCatalog;
 use domain::skill::SkillCatalog;
-use eyre::{Result, WrapErr};
+use eyre::Result;
 use tokio::sync::watch;
 use tracing::{error, info};
 use xcat_mcp::{
@@ -13,7 +13,6 @@ use xcat_mcp::{
 };
 
 use super::amemory_runtime::AmemoryRuntime;
-use crate::config::AppConfig;
 
 /// Controller managing the background MCP HTTP server runtime.
 pub struct McpController {

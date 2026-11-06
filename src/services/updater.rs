@@ -3,6 +3,7 @@
 use super::downloader::{download_file, verify_sha256};
 use super::install::{cleanup_temp, launch_prepared_update, update_temp_dir};
 use super::update::{UpdateChecker, UpdateInfo, UpdatePhase, is_safe_asset_name};
+use crate::state::app::AppStore;
 
 /// Download, verify and prepare an update package.
 pub async fn download_and_prepare_update(
@@ -20,13 +21,15 @@ pub async fn download_and_prepare_update(
     let dest_path = temp_dir.join(&info.asset_name);
 
     // 1. Download
-    phase_callback(UpdatePhase::Downloading { progress: 0 });
+    phase_callback(UpdatePhase::Downloading { progress: 0.0 });
     download_file(
         &info.download_url,
         &dest_path,
         info.asset_size,
         |progress| {
-            phase_callback(UpdatePhase::Downloading { progress });
+            phase_callback(UpdatePhase::Downloading {
+                progress: (progress as f32) / 100.0,
+            });
         },
     )
     .await?;
@@ -46,4 +49,54 @@ pub async fn download_and_prepare_update(
 pub fn apply_update_and_restart(asset_name: &str) -> Result<(), String> {
     let dest_path = update_temp_dir().join(asset_name);
     launch_prepared_update(&dest_path)
+}
+
+/// Helper coordinator for AppStore update actions.
+pub struct AppUpdater;
+
+impl AppUpdater {
+    /// Asynchronously check GitHub releases and update the store's phase.
+    pub async fn check_and_update_state(store: AppStore) {
+        store.set_update_phase(UpdatePhase::Checking);
+        let checker = UpdateChecker::new(
+            env!("CARGO_PKG_VERSION"),
+            "xcat",
+            "amemory",
+        );
+        match checker.check_github().await {
+            Ok(Some(info)) => {
+                store.set_update_phase(UpdatePhase::Available(info.clone()));
+                store.set_update_available(Some(info));
+            }
+            Ok(None) => {
+                store.set_update_phase(UpdatePhase::UpToDate);
+            }
+            Err(e) => {
+                store.set_update_phase(UpdatePhase::Error(e.to_string()));
+            }
+        }
+    }
+
+    /// Asynchronously download the release asset, track progress, and verify checksum.
+    pub async fn execute_download_and_verify(store: AppStore) -> Result<(), String> {
+        let info = store
+            .update_available
+            .get_untracked()
+            .ok_or_else(|| "没有可用的更新版本".to_string())?;
+
+        let st = store.clone();
+        download_and_prepare_update(&info, move |p| {
+            st.set_update_phase(p);
+        })
+        .await
+    }
+
+    /// Prepare installation and restart into the updated binary.
+    pub fn apply_and_restart(store: AppStore) -> Result<(), String> {
+        let info = store
+            .update_available
+            .get_untracked()
+            .ok_or_else(|| "没有可用的更新版本".to_string())?;
+        apply_update_and_restart(&info.asset_name)
+    }
 }

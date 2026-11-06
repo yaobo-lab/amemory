@@ -1,6 +1,6 @@
 //! Filter criteria for knowledge items and search queries.
 
-use domain::memory::SearchMode;
+pub use domain::memory::SearchMode;
 use serde::{Deserialize, Serialize};
 
 use super::types::ItemKind;

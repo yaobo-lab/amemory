@@ -192,6 +192,9 @@ pub enum ServerMode {
     McpHttp,
     /// Run full XERJ server runtime (REST + ES-compat + Console + gRPC) alongside unified MCP HTTP.
     Server,
+    /// Run Native Shell GUI client (Clippi 1:1 replica).
+    #[serde(alias = "gui", alias = "desktop")]
+    Gui,
 }
 
 /// Server transport and endpoint configuration.

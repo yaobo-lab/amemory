@@ -1,7 +1,6 @@
 //! GUI appearance and interaction settings.
 
 use std::fs;
-use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
@@ -65,7 +64,7 @@ pub enum ThemeMode {
 }
 
 /// User GUI configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GuiSettings {
     /// Theme appearance.
     pub theme_mode: ThemeMode,
@@ -91,6 +90,18 @@ pub struct GuiSettings {
     pub sound_effect_enabled: bool,
     /// Sound effect asset name.
     pub sound_effect_name: String,
+    /// Sound index (1..=5).
+    #[serde(default = "default_sound_idx")]
+    pub copy_sound_index: usize,
+    /// Whether to play sound on copy.
+    #[serde(default = "default_true")]
+    pub play_sound_on_copy: bool,
+    /// Whether paste on select.
+    #[serde(default = "default_true")]
+    pub paste_on_select: bool,
+    /// Global summon hotkey string.
+    #[serde(default = "default_hotkey")]
+    pub global_summon_hotkey: String,
     /// Whether the home stats overview banner is visible.
     pub show_stats_overview: bool,
     /// Window width in points.
@@ -102,6 +113,10 @@ pub struct GuiSettings {
     /// Last remembered Y position.
     pub last_pos_y: Option<f32>,
 }
+
+fn default_sound_idx() -> usize { 1 }
+fn default_true() -> bool { true }
+fn default_hotkey() -> String { "Alt+Space".to_string() }
 
 impl Default for GuiSettings {
     fn default() -> Self {
@@ -118,6 +133,10 @@ impl Default for GuiSettings {
             update_channel: "auto".to_string(),
             sound_effect_enabled: true,
             sound_effect_name: "copy_kacha.wav".to_string(),
+            copy_sound_index: 1,
+            play_sound_on_copy: true,
+            paste_on_select: true,
+            global_summon_hotkey: "Alt+Space".to_string(),
             show_stats_overview: true,
             window_width: 324.0,
             window_height: 480.0,
