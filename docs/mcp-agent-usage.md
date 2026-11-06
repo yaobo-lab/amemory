@@ -59,7 +59,7 @@ MCP 的核心职责包括：
 | `crates/domain` | `amemory-domain` | Skill/Book 规范校验、YAML frontmatter 解析、UTF-8 清洗、稳定分块、PDF/DOCX/PPTX/XLSX 提取 |
 | `crates/adapter` | `amemory-adapter` | `SearchStore` 端口与 `XerjAdapter` 实现，管理 `amemory-skills-v1`、`amemory-books-v1`、`amemory-memory-v1` 三个索引及增量同步账本 |
 | `crates/mcp` | `amemory-mcp` | 统一 MCP 门面，合并 18 个 Amemory 工具与 20/23 个 XERJ 原生工具，启动期零冲突校验 |
-| `crates/xerj` | `xerj-*` | Vendored XERJ 引擎源码胶囊（`v1.0.0-rc.101`），通过 `patches/xerj/` 补丁化管理 |
+| `crates/xerj` | `xerj-*` | Vendored XERJ 引擎源码胶囊（`v1.0.0-rc.101`），通过 `patches/` 补丁化管理 |
 
 ---
 

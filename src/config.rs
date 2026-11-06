@@ -186,10 +186,10 @@ pub enum ServerMode {
     /// Synchronize Skills and Books into XERJ and exit.
     Sync,
     /// Run unified MCP server over stdio.
-    #[default]
     #[serde(alias = "stdio", alias = "mcp_stdio")]
     McpStdio,
     /// Run unified MCP server over Streamable HTTP.
+    #[default]
     #[serde(alias = "http", alias = "mcp_http")]
     McpHttp,
     /// Run full XERJ server runtime (REST + ES-compat + Console + gRPC) alongside unified MCP HTTP.

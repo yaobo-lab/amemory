@@ -11,7 +11,7 @@ $required = @(
     "crates/xerj/engine/proto/xerj.proto",
     "crates/xerj/engine/tests/es-compat-yaml/Cargo.toml",
     "crates/xerj/xerj-ux/index.html",
-    "patches/xerj/upstream.toml"
+    "patches/upstream.toml"
 )
 
 foreach ($item in $required) {

@@ -41,7 +41,15 @@ pub async fn run(config: AppConfig) -> Result<()> {
         .sync_catalog(IndexTarget::Skills, scanned_skills, &skill_docs)
         .await
         .wrap_err("同步 Skill 目录到 XERJ 失败")?;
-    info!("{}", skill_sync.message);
+    info!(
+        "skills loaded: data_dir={}, skills={}, loaded_skills={}, written_parts={}, unchanged_parts={}, deleted_parts={}",
+        config.xerj.data_dir.display(),
+        config.storage.skills.display(),
+        skill_sync.scanned_items,
+        skill_sync.indexed_documents,
+        skill_sync.unchanged_documents,
+        skill_sync.deleted_documents,
+    );
 
     let (scanned_books, book_docs) = books_catalog
         .build_all_index_documents()
@@ -50,29 +58,54 @@ pub async fn run(config: AppConfig) -> Result<()> {
         .sync_catalog(IndexTarget::Books, scanned_books, &book_docs)
         .await
         .wrap_err("同步 Book 目录到 XERJ 失败")?;
-    info!("{}", book_sync.message);
+    info!(
+        "books loaded: data_dir={}, books={}, loaded_books={}, written_parts={}, unchanged_parts={}, deleted_parts={}",
+        config.xerj.data_dir.display(),
+        config.storage.books.display(),
+        book_sync.scanned_items,
+        book_sync.indexed_documents,
+        book_sync.unchanged_documents,
+        book_sync.deleted_documents,
+    );
+
+    let stats = adapter.stats().await.wrap_err("读取索引统计信息失败")?;
+    info!(
+        "index statistics: data_dir={}, skills_docs={}, books_docs={}, memory_docs={}",
+        stats.data_dir, stats.skills_docs, stats.books_docs, stats.memory_docs,
+    );
 
     match config.server.mode {
         ServerMode::Sync => run_sync_mode(&adapter).await,
         ServerMode::McpStdio => {
             run_mcp_stdio(&config, adapter, skills_catalog, books_catalog).await
         }
-        ServerMode::McpHttp => run_mcp_http(&config, adapter, skills_catalog, books_catalog).await,
+        ServerMode::McpHttp => {
+            run_mcp_http(
+                &config,
+                adapter,
+                skills_catalog,
+                books_catalog,
+                scanned_skills,
+                scanned_books,
+            )
+            .await
+        }
         ServerMode::Server => {
-            run_full_server(&config, adapter, skills_catalog, books_catalog).await
+            run_full_server(
+                &config,
+                adapter,
+                skills_catalog,
+                books_catalog,
+                scanned_skills,
+                scanned_books,
+            )
+            .await
         }
     }
 }
 
 async fn run_sync_mode(adapter: &XerjAdapter) -> Result<()> {
-    let stats = adapter.stats().await.wrap_err("读取索引统计信息失败")?;
-    info!(
-        skills_docs = stats.skills_docs,
-        books_docs = stats.books_docs,
-        memory_docs = stats.memory_docs,
-        data_dir = %stats.data_dir,
-        "同步模式完成，正在刷盘退出"
-    );
+    info!("同步模式完成，正在刷盘退出");
     adapter.flush_all().await;
     Ok(())
 }
@@ -126,6 +159,8 @@ async fn run_mcp_http(
     adapter: Arc<XerjAdapter>,
     skills_catalog: SkillCatalog,
     books_catalog: BookCatalog,
+    loaded_skills: usize,
+    loaded_books: usize,
 ) -> Result<()> {
     let loopback = if config.xerj.external_es_url.is_none() {
         Some(
@@ -155,12 +190,18 @@ async fn run_mcp_http(
         books_catalog,
         es_url,
     )?;
+    let total_tools = unified.list_all_tools().len();
     let http_cfg = build_http_mcp_config(config)?;
 
     info!(
-        bind_addr = %http_cfg.bind_addr,
-        endpoint = %http_cfg.endpoint_path,
-        "启动统一 MCP HTTP 服务"
+        "MCP server ready: transport=http, bind_address={}, http_port={}, endpoint=http://{}{}, loaded_skills={}, loaded_books={}, total_tools={}",
+        http_cfg.bind_addr,
+        http_cfg.bind_addr.port(),
+        http_cfg.bind_addr,
+        http_cfg.endpoint_path,
+        loaded_skills,
+        loaded_books,
+        total_tools,
     );
     let res = serve_http(unified, http_cfg)
         .await
@@ -178,6 +219,8 @@ async fn run_full_server(
     adapter: Arc<XerjAdapter>,
     skills_catalog: SkillCatalog,
     books_catalog: BookCatalog,
+    loaded_skills: usize,
+    loaded_books: usize,
 ) -> Result<()> {
     let running_xerj = adapter
         .start_full_server()
@@ -197,15 +240,21 @@ async fn run_full_server(
         books_catalog,
         &es_url,
     )?;
+    let total_tools = unified.list_all_tools().len();
     let http_cfg = build_http_mcp_config(config)?;
 
     info!(
-        mcp_addr = %http_cfg.bind_addr,
-        mcp_endpoint = %http_cfg.endpoint_path,
-        xerj_es = %running_xerj.es_compat_addr(),
-        xerj_rest = %running_xerj.rest_addr(),
-        xerj_grpc = %running_xerj.grpc_addr(),
-        "Amemory + XERJ 完整服务已启动"
+        "MCP server ready: transport=http (full-server), bind_address={}, http_port={}, endpoint=http://{}{}, xerj_es={}, xerj_rest={}, xerj_grpc={}, loaded_skills={}, loaded_books={}, total_tools={}",
+        http_cfg.bind_addr,
+        http_cfg.bind_addr.port(),
+        http_cfg.bind_addr,
+        http_cfg.endpoint_path,
+        running_xerj.es_compat_addr(),
+        running_xerj.rest_addr(),
+        running_xerj.grpc_addr(),
+        loaded_skills,
+        loaded_books,
+        total_tools,
     );
 
     let mcp_res = serve_http(unified, http_cfg)

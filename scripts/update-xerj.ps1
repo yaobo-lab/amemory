@@ -24,7 +24,7 @@ try {
     Copy-Item -Recurse (Join-Path $tmp "engine") (Join-Path $target "engine")
     Copy-Item -Recurse (Join-Path $tmp "xerj-ux") (Join-Path $target "xerj-ux")
 
-    $patchDir = Join-Path $root "patches/xerj"
+    $patchDir = Join-Path $root "patches"
     New-Item -ItemType Directory -Force -Path $patchDir | Out-Null
     Get-ChildItem $patchDir -Filter *.patch | Sort-Object Name | ForEach-Object {
         git apply --directory="crates/xerj" $_.FullName
@@ -36,7 +36,7 @@ tag = "$Tag"
 commit = "$commit"
 fetched_at = "$(Get-Date -Format o)"
 license = "Apache-2.0"
-patch_series = "patches/xerj"
+patch_series = "patches"
 "@
     Set-Content -Path (Join-Path $patchDir "upstream.toml") -Value $upstream -Encoding UTF8
 }

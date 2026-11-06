@@ -90,6 +90,14 @@ pub async fn serve_http<S: SearchStore + Clone + 'static>(
     let listener = TcpListener::bind(config.bind_addr)
         .await
         .map_err(|e| McpFacadeError::Transport(format!("绑定 {} 失败: {e}", config.bind_addr)))?;
+    let local_addr = listener
+        .local_addr()
+        .map_err(|e| McpFacadeError::Transport(format!("获取本地监听地址失败: {e}")))?;
+    tracing::info!(
+        "HTTP MCP listener bound: http://{}{}",
+        local_addr,
+        config.endpoint_path
+    );
 
     axum::serve(listener, router)
         .with_graceful_shutdown(async {

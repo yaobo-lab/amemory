@@ -20,13 +20,14 @@ use crate::memory::{
 };
 
 const BOOK_FILE_NAME: &str = "BOOK.md";
-const ALLOWED_BOOK_SUBDIRS: [&str; 6] = [
+const ALLOWED_BOOK_SUBDIRS: [&str; 7] = [
     "chapters",
     "notes",
     "references",
     "summaries",
     "assets",
     "files",
+    "sources",
 ];
 const ALLOWED_BOOK_ROOT_FILES: [&str; 2] = ["LICENSE.txt", "LICENSE"];
 
@@ -888,11 +889,7 @@ pub fn parse_book_frontmatter(markdown: &str) -> Result<(String, String), Domain
         match key {
             "name" => name = Some(value),
             "description" => description = Some(value),
-            other => {
-                return Err(DomainError::Validation(format!(
-                    "BOOK.md frontmatter 仅允许 `name` 和 `description` 字段，发现未知字段 `{other}`"
-                )));
-            }
+            _ => {}
         }
     }
 
@@ -980,11 +977,14 @@ pub fn normalize_relative_book_path(raw_path: &str) -> Result<String, DomainErro
 
     if parts.len() == 1 {
         let single = &parts[0];
-        if ALLOWED_BOOK_ROOT_FILES.contains(&single.as_str()) {
+        let is_text_ext = Path::new(single)
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("md") || ext.eq_ignore_ascii_case("txt"));
+        if ALLOWED_BOOK_ROOT_FILES.contains(&single.as_str()) || is_text_ext {
             return Ok(single.clone());
         }
         return Err(DomainError::Validation(format!(
-            "book 根目录仅允许 {BOOK_FILE_NAME} 或 LICENSE.txt，不允许 `{single}`"
+            "book 根目录仅允许 .md、.txt 或 LICENSE.txt，不允许 `{single}`"
         )));
     }
 
@@ -1116,7 +1116,7 @@ fn collect_book_files_recursive(
             }
             if let Ok(rel) = path.strip_prefix(root) {
                 let rel_str = rel.to_string_lossy().replace('\\', "/");
-                if rel_str.starts_with("files/imports/") {
+                if rel_str.starts_with("files/imports/") || rel_str.starts_with("sources/") {
                     // Binary/raw imported files are archived here; their extracted text lives in notes/
                     continue;
                 }

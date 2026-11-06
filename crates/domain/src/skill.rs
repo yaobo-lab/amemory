@@ -186,8 +186,7 @@ impl SkillCatalog {
             if dir_name.starts_with('.') {
                 continue;
             }
-            let skill_md_path = path.join(SKILL_FILE_NAME);
-            if !skill_md_path.is_file() {
+            if resolve_skill_entry_file(&path, dir_name).is_none() {
                 continue;
             }
             entries.push(load_skill_entry(&path)?);
@@ -229,6 +228,7 @@ impl SkillCatalog {
         let entries = self.collect_entries()?;
         let mut matches: Vec<SkillMatch> = entries
             .into_iter()
+            .filter(|entry| !is_model_invocation_disabled(&entry.skill_markdown))
             .filter_map(|entry| {
                 let score = score_skill_entry(&entry, trimmed);
                 if score == 0 {
@@ -637,11 +637,7 @@ pub fn parse_skill_frontmatter(markdown: &str) -> Result<(String, String), Domai
         match key {
             "name" => name = Some(value),
             "description" => description = Some(value),
-            other => {
-                return Err(DomainError::Validation(format!(
-                    "SKILL.md frontmatter 仅允许 `name` 和 `description` 字段，发现未知字段 `{other}`"
-                )));
-            }
+            _ => {}
         }
     }
 
@@ -808,6 +804,36 @@ fn build_skill_preview(entry: &SkillEntry, query: &str) -> String {
     entry.description.chars().take(180).collect()
 }
 
+fn resolve_skill_entry_file(skill_dir: &Path, dir_name: &str) -> Option<PathBuf> {
+    let primary = skill_dir.join(SKILL_FILE_NAME);
+    if primary.is_file() {
+        return Some(primary);
+    }
+    let fallback = skill_dir.join(format!("{dir_name}.md"));
+    if fallback.is_file() {
+        return Some(fallback);
+    }
+    None
+}
+
+fn is_model_invocation_disabled(markdown: &str) -> bool {
+    let normalized = markdown.replace("\r\n", "\n");
+    let Some(rest) = normalized.strip_prefix("---\n") else {
+        return false;
+    };
+    let Some((frontmatter, _)) = rest.split_once("\n---\n") else {
+        return false;
+    };
+    for raw_line in frontmatter.lines() {
+        if let Some((key, value)) = raw_line.trim().split_once(':')
+            && key.trim() == "disable-model-invocation"
+        {
+            return trim_yaml_scalar(value.trim()).eq_ignore_ascii_case("true");
+        }
+    }
+    false
+}
+
 fn load_skill_entry(skill_dir: &Path) -> Result<SkillEntry, DomainError> {
     let dir_name = skill_dir
         .file_name()
@@ -816,7 +842,11 @@ fn load_skill_entry(skill_dir: &Path) -> Result<SkillEntry, DomainError> {
             DomainError::Validation(format!("无法识别 skill 目录名称: {}", skill_dir.display()))
         })?;
 
-    let skill_md_path = skill_dir.join(SKILL_FILE_NAME);
+    let skill_md_path = resolve_skill_entry_file(skill_dir, dir_name).ok_or_else(|| {
+        DomainError::NotFound(format!(
+            "在 skill `{dir_name}` 中未找到 `{SKILL_FILE_NAME}` 或 `{dir_name}.md`"
+        ))
+    })?;
     let skill_markdown = fs::read_to_string(&skill_md_path)?;
     let description = validate_skill_document(dir_name, &skill_markdown)?;
 
@@ -845,13 +875,18 @@ fn collect_skill_files_recursive(
     current: &Path,
     out: &mut Vec<SkillFile>,
 ) -> Result<(), DomainError> {
+    let root_name = root
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or_default();
+    let fallback_entry_name = format!("{root_name}.md");
     for entry in fs::read_dir(current)? {
         let entry = entry?;
         let path = entry.path();
         let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
             continue;
         };
-        if name.starts_with('.') {
+        if name.starts_with('.') || name == "__pycache__" {
             continue;
         }
         if path.is_dir() {
@@ -860,7 +895,7 @@ fn collect_skill_files_recursive(
             }
             collect_skill_files_recursive(root, &path, out)?;
         } else if path.is_file() {
-            if current == root && name == SKILL_FILE_NAME {
+            if current == root && (name == SKILL_FILE_NAME || name == fallback_entry_name) {
                 continue;
             }
             if let Ok(rel) = path.strip_prefix(root) {

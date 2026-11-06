@@ -1,5 +1,6 @@
 [server]
-mode = "mcp-stdio" # 可选: "sync", "mcp-stdio", "mcp-http", "server"
+# 运行模式: "mcp-http" (默认，启动 HTTP MCP 服务), "mcp-stdio", "sync" (仅同步退出), "server" (完整 XERJ + MCP HTTP)
+mode = "mcp-http"
 host = "127.0.0.1"
 port = 8000
 endpoint_path = "/mcp"
@@ -28,5 +29,9 @@ max_file_bytes = 52428800
 
 [logger]
 level = "info"
+size_mb = 10
+console = true
+dir = "./logs"
 
 [panic]
+exit_on_panic = true
