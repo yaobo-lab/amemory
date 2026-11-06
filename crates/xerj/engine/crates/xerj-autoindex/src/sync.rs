@@ -1,0 +1,2077 @@
+//! Pure, inert corpus-generation planning and durable replay.
+//!
+//! Nothing in this module performs HTTP I/O or changes autoindex behaviour.
+//! It defines the complete state an eventual synchronization executor must
+//! durably bind before publication.
+
+use crate::state::{DuplicateFile, Plan};
+use anyhow::{Context, Result};
+use serde::de::{DeserializeSeed, Error as _, MapAccess, SeqAccess, Visitor};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::fmt;
+
+pub const EXECUTION_IDENTITY_VERSION: u32 = 2;
+
+/// On-disk version of the durable corpus-generation format.
+///
+/// Bumping it declares that state directories written by older versions cannot
+/// be adopted in place — `CommittedManifest::bootstrap_legacy` names this
+/// version in the refusal, and the CLI turns that into a followable rebuild.
+/// Version 1 is the first format: everything before it is a pre-generation
+/// resume `Plan`.
+pub const GENERATION_FORMAT_VERSION: u32 = 1;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ManifestPath {
+    /// Reversible platform-native path identity (`unix:`/`windows:` encoding).
+    pub path_id: String,
+    pub rel: String,
+    /// Canonical election ranks real paths before followed symlinks.
+    pub is_symlink: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ManifestGroup {
+    /// Stable logical identity across rename/replacement.
+    pub group_id: String,
+    /// Collision-safe document identity assigned only after byte verification.
+    pub content_id: String,
+    /// Raw full-content digest. Never treated as globally unique by itself.
+    pub content_digest: String,
+    pub content_size: u64,
+    pub canonical: ManifestPath,
+    #[serde(default)]
+    pub aliases: Vec<ManifestPath>,
+    #[serde(default)]
+    pub dataset_slugs: Vec<String>,
+    pub expected_records: u64,
+    pub expected_passages: u64,
+    pub expected_vectors: u64,
+    /// Records this content produced that no dataset could accept. They are
+    /// *not* published, so no read-back count can recover them — the sealed
+    /// preparation is the only place the number exists, and the generation has
+    /// to carry it or the catalog's `junk_records_total` is a permanent zero.
+    /// Junk is recorded, never fatal (`cli.rs` EXIT CODES).
+    #[serde(default)]
+    pub expected_junk_records: u64,
+    /// Per-dataset breakdown of `expected_records`, keyed by the same dataset
+    /// identity the records were written under. One content can feed several
+    /// datasets — a SQL dump is one file and N tables, so N datasets — and the
+    /// flat total is then comparable to no single dataset's read-back. Empty
+    /// on a generation sealed before this ledger existed; `expected_records_for`
+    /// decides what such a group can still attribute.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub expected_records_by_dataset: BTreeMap<String, u64>,
+}
+
+impl ManifestGroup {
+    fn all_paths(&self) -> impl Iterator<Item = &ManifestPath> {
+        std::iter::once(&self.canonical).chain(self.aliases.iter())
+    }
+
+    /// Records this group contributed to one dataset, or `None` when the seal
+    /// genuinely cannot say.
+    ///
+    /// A group sealed before `expected_records_by_dataset` existed carries only
+    /// the whole-content total. That total is attributable when the content fed
+    /// a single dataset, and zero is attributable to every dataset; a legacy
+    /// fan-out group that produced records is unattributable and must be
+    /// reported as such rather than guessed at.
+    pub fn expected_records_for(&self, slug: &str) -> Option<u64> {
+        if !self.expected_records_by_dataset.is_empty() {
+            return Some(
+                self.expected_records_by_dataset
+                    .get(slug)
+                    .copied()
+                    .unwrap_or(0),
+            );
+        }
+        if self.expected_records == 0 || self.dataset_slugs == [slug] {
+            Some(self.expected_records)
+        } else {
+            None
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case", tag = "policy")]
+pub enum SourceExecutionPolicy {
+    DurableSnapshot {
+        reference: String,
+        snapshot_digest: String,
+    },
+    AbortOnSourceChange {
+        inventory_digest: String,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ExecutionIdentity {
+    pub version: u32,
+    pub root_identity: String,
+    pub url: String,
+    pub prefix: String,
+    pub follow_symlinks: bool,
+    pub chunker_identity: String,
+    /// Opaque, server-authenticated identity of the exact embedding execution
+    /// space. Autoindex must never synthesize model/tokenizer labels.
+    pub embedding_identity_sha256: String,
+    pub embedding_backend: String,
+    /// Vector width, exactly as the server reported it. `None` is the honest
+    /// record for a backend whose width the server does not pin (`proxy`, and
+    /// a `neural` node whose assets it could not resolve — see
+    /// `esclient::EmbeddingExecutionIdentity::dimensions`) and for the
+    /// synthetic `disabled` identity a no-semantic plan pins. It must
+    /// never be coerced to a number: a generation that recorded "unknown" and
+    /// one that recorded 384 are different execution spaces.
+    #[serde(default)]
+    pub embedding_dimension: Option<usize>,
+    pub embedding_semantic_contract: String,
+    pub embedding_resumable: bool,
+    pub graph_enabled: bool,
+    pub brain: String,
+    pub detector_identity: String,
+    pub schema_identity: String,
+    pub index_identity: String,
+    pub source_policy: SourceExecutionPolicy,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GenerationManifest {
+    pub generation: u64,
+    /// Missing only for a legacy generation-0 plan.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution: Option<ExecutionIdentity>,
+    pub plan: Plan,
+    pub groups: Vec<ManifestGroup>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommittedManifest {
+    pub generation: u64,
+    pub manifest_digest: String,
+    pub plan: Plan,
+    pub groups: Vec<ManifestGroup>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution: Option<ExecutionIdentity>,
+}
+
+#[derive(Debug, Clone)]
+pub enum LegacyBootstrap {
+    Ready(Box<CommittedManifest>),
+    MigrationRequired { reasons: Vec<String> },
+}
+
+impl CommittedManifest {
+    pub fn genesis() -> Result<Self> {
+        match Self::bootstrap_legacy(Plan::default())? {
+            LegacyBootstrap::Ready(manifest) => Ok(*manifest),
+            LegacyBootstrap::MigrationRequired { .. } => {
+                anyhow::bail!("empty generation-zero manifest unexpectedly requires migration")
+            }
+        }
+    }
+
+    fn validate_genesis(&self) -> Result<()> {
+        anyhow::ensure!(
+            self.generation == 0
+                && self.manifest_digest == Self::genesis()?.manifest_digest
+                && serde_json::to_value(&self.plan)? == serde_json::to_value(Plan::default())?
+                && self.groups.is_empty()
+                && self.execution.is_none(),
+            "generation-zero bootstrap manifest is not exact genesis"
+        );
+        Ok(())
+    }
+
+    /// Adopt a pre-generation resume `Plan` as generation zero, or state — once,
+    /// by name and version — that it cannot be adopted.
+    ///
+    /// A non-empty legacy plan can *never* be adopted, and that is a deliberate,
+    /// versioned format boundary rather than an accident of validation: a
+    /// `Plan` records no stable group ID, no content byte length, and no
+    /// validated per-group output counts, so no amount of per-file evidence
+    /// could reconstruct a `ManifestGroup`. Every existing `--no-graph` state
+    /// directory written before `GENERATION_FORMAT_VERSION` therefore requires
+    /// an explicit rebuild into a new state directory and prefix.
+    ///
+    /// Saying that once, with the version in it, is the point. An earlier
+    /// revision pushed one identical "no complete manifest group" line *per
+    /// file key* — an O(files) refusal string (megabytes on a large corpus)
+    /// that read as a pile of per-file validation failures rather than as the
+    /// single migration decision it is. redb makes exactly this distinction:
+    /// an old on-disk format returns a named, versioned `UpgradeRequired(v)`,
+    /// kept separate from `Corrupted`, so the operator is told to migrate
+    /// rather than handed evidence to debug (redb,
+    /// `src/tree_store/page_store/header.rs:480-492` and
+    /// `src/error.rs:212-213, 244-252`, Apache-2.0/MIT — approach only, no
+    /// code taken).
+    pub fn bootstrap_legacy(plan: Plan) -> Result<LegacyBootstrap> {
+        if !plan.files.is_empty() {
+            return Ok(LegacyBootstrap::MigrationRequired {
+                reasons: vec![format!(
+                    "this state directory holds a pre-generation autoindex resume plan \
+                     ({} planned files); the durable corpus-generation format \
+                     (v{GENERATION_FORMAT_VERSION}) requires a stable group identity, content \
+                     byte length, and validated output counts that a resume plan never recorded, \
+                     so it cannot be adopted in place and must be rebuilt",
+                    plan.files.len()
+                )],
+            });
+        }
+        // An empty legacy plan is genesis: there is nothing to migrate. Alias
+        // records without canonical files are the only remaining evidence that
+        // could be malformed, so they are still checked individually.
+        let mut reasons = Vec::new();
+        for alias in &plan.duplicate_files {
+            if !native_path_id_supported(&alias.path_id) {
+                reasons.push(format!(
+                    "{}: missing or lossy native alias path identity",
+                    alias.rel
+                ));
+            }
+            if alias.is_symlink.is_none() {
+                reasons.push(format!(
+                    "{}: legacy plan did not persist alias symlink rank",
+                    alias.rel
+                ));
+            }
+        }
+        reasons.sort();
+        reasons.dedup();
+        if !reasons.is_empty() {
+            return Ok(LegacyBootstrap::MigrationRequired { reasons });
+        }
+        let manifest = GenerationManifest {
+            generation: 0,
+            execution: None,
+            plan: plan.clone(),
+            groups: Vec::new(),
+        };
+        Ok(LegacyBootstrap::Ready(Box::new(Self {
+            generation: 0,
+            manifest_digest: manifest_digest(&manifest)?,
+            plan,
+            groups: Vec::new(),
+            execution: None,
+        })))
+    }
+
+    fn from_generation(manifest: GenerationManifest, digest: String) -> Self {
+        Self {
+            generation: manifest.generation,
+            manifest_digest: digest,
+            plan: manifest.plan,
+            groups: manifest.groups,
+            execution: manifest.execution,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum SyncOperationKind {
+    Upsert,
+    Delete,
+    Metadata,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+pub struct SyncOperation {
+    pub operation_id: String,
+    pub kind: SyncOperationKind,
+    pub group_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub desired_content_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SyncOperationState {
+    Started,
+    Committed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PendingSync {
+    pub tx_id: String,
+    pub base_generation: u64,
+    pub base_manifest_digest: String,
+    pub desired_manifest_digest: String,
+    pub operation_hash: String,
+    pub desired: GenerationManifest,
+    pub operations: Vec<SyncOperation>,
+    #[serde(default)]
+    pub operation_states: BTreeMap<String, SyncOperationState>,
+    #[serde(default)]
+    pub validated: bool,
+    /// Lazily-derived membership index over `operations`; never serialized.
+    /// See [`OperationIdIndex`] for why it exists.
+    #[serde(skip)]
+    operation_id_index: std::sync::OnceLock<OperationIdIndex>,
+}
+
+/// Derived, never-serialized membership index over
+/// [`PendingSync::operations`] (#1224).
+///
+/// Every journaled operation state event validates that its operation id
+/// belongs to the sync's plan, and a resumed run replays all of those events
+/// again on load. A linear scan per event makes both quadratic in the
+/// operation count; the index makes them O(1) after one build. `len` is the
+/// `operations` length the set was built from — nothing in production
+/// mutates the list after `PendingSync::new`, but the guard keeps a
+/// restructured struct answering correctly instead of trusting a stale set.
+#[derive(Debug, Clone, Default)]
+struct OperationIdIndex {
+    len: usize,
+    ids: std::collections::HashSet<String>,
+}
+
+impl OperationIdIndex {
+    fn build(operations: &[SyncOperation]) -> Self {
+        Self {
+            len: operations.len(),
+            ids: operations
+                .iter()
+                .map(|operation| operation.operation_id.clone())
+                .collect(),
+        }
+    }
+
+    fn contains(&self, operations: &[SyncOperation], operation_id: &str) -> bool {
+        if self.len != operations.len() {
+            return operations
+                .iter()
+                .any(|operation| operation.operation_id == operation_id);
+        }
+        self.ids.contains(operation_id)
+    }
+}
+
+impl PendingSync {
+    pub fn new(
+        tx_id: String,
+        base: &CommittedManifest,
+        mut desired: GenerationManifest,
+    ) -> Result<Self> {
+        canonicalize_manifest_order(&mut desired);
+        validate_manifest(&desired, false)?;
+        validate_supported_manifest_delta(base, &desired)?;
+        let operations = plan_operations(&base.groups, &desired.groups);
+        let pending = Self {
+            tx_id,
+            base_generation: base.generation,
+            base_manifest_digest: base.manifest_digest.clone(),
+            desired_manifest_digest: manifest_digest(&desired)?,
+            operation_hash: operation_hash(&operations)?,
+            desired,
+            operations,
+            operation_states: BTreeMap::new(),
+            validated: false,
+            operation_id_index: std::sync::OnceLock::new(),
+        };
+        pending.validate_against(base)?;
+        Ok(pending)
+    }
+
+    pub fn validate_against(&self, base: &CommittedManifest) -> Result<()> {
+        anyhow::ensure!(
+            self.base_generation == base.generation
+                && self.base_manifest_digest == base.manifest_digest,
+            "sync_begin base does not match committed authority"
+        );
+        anyhow::ensure!(
+            self.desired.generation == self.base_generation + 1,
+            "desired generation must immediately follow its base"
+        );
+        validate_manifest(&self.desired, false)?;
+        validate_supported_manifest_delta(base, &self.desired)?;
+        anyhow::ensure!(
+            self.desired_manifest_digest == manifest_digest(&self.desired)?,
+            "desired manifest digest does not match sync_begin payload"
+        );
+        let expected = plan_operations(&base.groups, &self.desired.groups);
+        anyhow::ensure!(
+            self.operations == expected,
+            "sync operation list was not derived exactly from base and desired manifests"
+        );
+        anyhow::ensure!(
+            self.operation_hash == operation_hash(&expected)?,
+            "sync operation hash does not match derived operation list"
+        );
+        let operation_ids: HashSet<&str> = expected
+            .iter()
+            .map(|operation| operation.operation_id.as_str())
+            .collect();
+        anyhow::ensure!(
+            self.operation_states
+                .keys()
+                .all(|operation_id| operation_ids.contains(operation_id.as_str())),
+            "sync state references an operation absent from sync_begin"
+        );
+        Ok(())
+    }
+
+    pub fn apply_operation_state(
+        &mut self,
+        tx_id: &str,
+        operation_id: &str,
+        state: SyncOperationState,
+    ) -> Result<()> {
+        self.validate_operation_state(tx_id, operation_id, &state)?;
+        self.record_operation_state(operation_id, state);
+        Ok(())
+    }
+
+    /// The pure half of [`Self::apply_operation_state`]: every rejection, no
+    /// mutation. The journal checks a state write here before making it
+    /// durable, then records in place only after the append succeeded, so a
+    /// failed append leaves memory exactly as it was without cloning the
+    /// whole pending sync per event (#1224).
+    pub fn validate_operation_state(
+        &self,
+        tx_id: &str,
+        operation_id: &str,
+        state: &SyncOperationState,
+    ) -> Result<()> {
+        anyhow::ensure!(
+            self.tx_id == tx_id,
+            "operation state belongs to another sync"
+        );
+        anyhow::ensure!(
+            self.known_operation(operation_id),
+            "operation state references unknown operation {operation_id}"
+        );
+        let legal = match self.operation_states.get(operation_id) {
+            None => *state == SyncOperationState::Started,
+            Some(previous) => {
+                previous == state
+                    || previous == &SyncOperationState::Started
+                        && state == &SyncOperationState::Committed
+            }
+        };
+        anyhow::ensure!(
+            legal,
+            "illegal operation transition {:?} -> {state:?}",
+            self.operation_states.get(operation_id)
+        );
+        Ok(())
+    }
+
+    /// The mutating half of [`Self::apply_operation_state`]. Only meaningful
+    /// after [`Self::validate_operation_state`] accepted the same
+    /// transition.
+    pub fn record_operation_state(&mut self, operation_id: &str, state: SyncOperationState) {
+        self.operation_states
+            .insert(operation_id.to_string(), state);
+    }
+
+    /// Membership of `operation_id` in this sync's plan. A corpus run
+    /// journals two state events per operation and replays every event
+    /// again on resume, so the linear scan this replaces is quadratic in
+    /// the run size — on the 402,744-operation cve-records build that scan
+    /// alone is minutes of client CPU (#1224).
+    fn known_operation(&self, operation_id: &str) -> bool {
+        self.operation_id_index
+            .get_or_init(|| OperationIdIndex::build(&self.operations))
+            .contains(&self.operations, operation_id)
+    }
+
+    pub fn all_operations_committed(&self) -> bool {
+        self.operations.iter().all(|operation| {
+            self.operation_states.get(&operation.operation_id)
+                == Some(&SyncOperationState::Committed)
+        })
+    }
+
+    pub fn apply_validated(&mut self, tx_id: &str, digest: &str) -> Result<()> {
+        anyhow::ensure!(self.tx_id == tx_id, "validation belongs to another sync");
+        anyhow::ensure!(
+            self.desired_manifest_digest == digest,
+            "validation manifest digest does not match sync_begin"
+        );
+        anyhow::ensure!(
+            self.all_operations_committed(),
+            "cannot validate sync with unfinished operations"
+        );
+        self.validated = true;
+        Ok(())
+    }
+
+    pub fn apply_commit(self, tx_id: &str, digest: &str) -> Result<CommittedManifest> {
+        anyhow::ensure!(self.tx_id == tx_id, "commit belongs to another sync");
+        anyhow::ensure!(
+            self.desired_manifest_digest == digest,
+            "commit manifest digest does not match sync_begin"
+        );
+        anyhow::ensure!(self.validated, "cannot commit an unvalidated sync");
+        anyhow::ensure!(
+            self.all_operations_committed(),
+            "cannot commit sync with unfinished operations"
+        );
+        Ok(CommittedManifest::from_generation(
+            self.desired,
+            self.desired_manifest_digest,
+        ))
+    }
+}
+
+fn validate_supported_manifest_delta(
+    base: &CommittedManifest,
+    desired: &GenerationManifest,
+) -> Result<()> {
+    // Binding complete identity while migrating the legacy generation zero is
+    // the only configuration transition this vocabulary can represent. A
+    // durable snapshot reference and digest are generation inputs, not engine
+    // configuration, so they must advance with each desired generation.
+    if base.generation == 0 && base.execution.is_none() && base.groups.is_empty() {
+        anyhow::ensure!(
+            base.manifest_digest == CommittedManifest::genesis()?.manifest_digest,
+            "generation-one migration base is not exact genesis"
+        );
+        return Ok(());
+    }
+    if base.generation > 0 || base.execution.is_some() {
+        let same_execution_configuration = |left: &ExecutionIdentity, right: &ExecutionIdentity| {
+            let mut left = left.clone();
+            let mut right = right.clone();
+            if let (
+                SourceExecutionPolicy::DurableSnapshot { .. },
+                SourceExecutionPolicy::DurableSnapshot { .. },
+            ) = (&left.source_policy, &right.source_policy)
+            {
+                left.source_policy = SourceExecutionPolicy::DurableSnapshot {
+                    reference: String::new(),
+                    snapshot_digest: String::new(),
+                };
+                right.source_policy = left.source_policy.clone();
+            }
+            left == right
+        };
+        anyhow::ensure!(
+            match (&base.execution, &desired.execution) {
+                (Some(left), Some(right)) => same_execution_configuration(left, right),
+                (None, None) => true,
+                _ => false,
+            },
+            "execution identity or source policy changed without a supported operation"
+        );
+    }
+    anyhow::ensure!(
+        base.plan.alias_paths_indexed == desired.plan.alias_paths_indexed,
+        "plan flags changed without a supported operation"
+    );
+    // Junk is a local inference result, not remotely published generation
+    // membership. Adding/removing an unsupported file may advance the
+    // manifest for truthful map/status output, but it intentionally derives
+    // no remote data or catalog operation.
+    let normalize_datasets = |datasets: &[crate::state::PlanDataset]| {
+        let mut datasets = datasets.to_vec();
+        for dataset in &mut datasets {
+            // Membership operations legitimately change this projection.
+            dataset.file_count = 0;
+        }
+        datasets.sort_by(|left, right| {
+            left.slug
+                .cmp(&right.slug)
+                .then_with(|| left.index.cmp(&right.index))
+                .then_with(|| left.group.cmp(&right.group))
+        });
+        for dataset in &mut datasets {
+            dataset
+                .specs
+                .sort_by(|left, right| left.name.cmp(&right.name));
+        }
+        datasets
+    };
+    anyhow::ensure!(
+        canonical_json_bytes(&normalize_datasets(&base.plan.datasets))?
+            == canonical_json_bytes(&normalize_datasets(&desired.plan.datasets))?,
+        "dataset schema/index plan changed without a schema-generation operation"
+    );
+    // #929: a refusal is frozen with the schema it was refused under. Its
+    // membership (`file_keys`) is a projection of the folder and may move, but
+    // a later generation can neither forget that a dataset was refused nor
+    // invent one — either would let a corpus that lacks a dataset look whole.
+    let refused_definitions = |plan: &crate::state::Plan| -> Result<Vec<u8>> {
+        let mut refused: Vec<(Vec<crate::state::PlanDataset>, &str)> = plan
+            .refused_datasets
+            .iter()
+            .map(|refusal| {
+                (
+                    normalize_datasets(std::slice::from_ref(&refusal.dataset)),
+                    refusal.reason.as_str(),
+                )
+            })
+            .collect();
+        refused.sort_by(|left, right| left.0[0].slug.cmp(&right.0[0].slug));
+        canonical_json_bytes(&refused)
+    };
+    anyhow::ensure!(
+        refused_definitions(&base.plan)? == refused_definitions(&desired.plan)?,
+        "refused datasets changed without a schema-generation operation"
+    );
+    Ok(())
+}
+
+pub fn plan_operations(base: &[ManifestGroup], desired: &[ManifestGroup]) -> Vec<SyncOperation> {
+    let base: BTreeMap<&str, &ManifestGroup> = base
+        .iter()
+        .map(|group| (group.group_id.as_str(), group))
+        .collect();
+    let desired: BTreeMap<&str, &ManifestGroup> = desired
+        .iter()
+        .map(|group| (group.group_id.as_str(), group))
+        .collect();
+    let mut operations = Vec::new();
+    for (group_id, old) in &base {
+        match desired.get(group_id) {
+            None => operations.push(operation(SyncOperationKind::Delete, group_id, None)),
+            Some(new)
+                if old.content_id != new.content_id
+                    || old.content_digest != new.content_digest
+                    || old.content_size != new.content_size =>
+            {
+                operations.push(operation(
+                    SyncOperationKind::Upsert,
+                    group_id,
+                    Some(new.content_id.clone()),
+                ));
+            }
+            Some(new) if *old != *new => operations.push(operation(
+                SyncOperationKind::Metadata,
+                group_id,
+                Some(new.content_id.clone()),
+            )),
+            Some(_) => {}
+        }
+    }
+    for (group_id, new) in desired {
+        if !base.contains_key(group_id) {
+            operations.push(operation(
+                SyncOperationKind::Upsert,
+                group_id,
+                Some(new.content_id.clone()),
+            ));
+        }
+    }
+    operations.sort();
+    operations
+}
+
+fn operation(
+    kind: SyncOperationKind,
+    group_id: &str,
+    desired_content_id: Option<String>,
+) -> SyncOperation {
+    SyncOperation {
+        operation_id: format!("{kind:?}:{group_id}").to_ascii_lowercase(),
+        kind,
+        group_id: group_id.to_string(),
+        desired_content_id,
+    }
+}
+
+#[derive(Debug, Clone)]
+#[cfg_attr(not(test), allow(dead_code))]
+pub struct DesiredContentGroup {
+    pub content_id: String,
+    pub content_digest: String,
+    pub content_size: u64,
+    pub paths: Vec<ManifestPath>,
+    pub dataset_slugs: Vec<String>,
+    pub expected_records: u64,
+    pub expected_passages: u64,
+    pub expected_vectors: u64,
+    pub expected_junk_records: u64,
+    pub expected_records_by_dataset: BTreeMap<String, u64>,
+}
+
+/// Content identity is collision-safe and byte-verified by the inventory
+/// layer. Raw digest equality alone never merges groups.
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn reconcile_groups(
+    previous: &[ManifestGroup],
+    mut desired: Vec<DesiredContentGroup>,
+) -> Result<Vec<ManifestGroup>> {
+    validate_groups(previous)?;
+    desired.sort_by(|left, right| {
+        left.content_id
+            .cmp(&right.content_id)
+            .then_with(|| canonical_path(&left.paths).cmp(&canonical_path(&right.paths)))
+    });
+    let old_by_content: HashMap<&str, &ManifestGroup> = previous
+        .iter()
+        .map(|group| (group.content_id.as_str(), group))
+        .collect();
+    anyhow::ensure!(
+        old_by_content.len() == previous.len(),
+        "collision-safe content IDs must be unique"
+    );
+    let surviving_content: HashSet<String> = desired
+        .iter()
+        .map(|group| group.content_id.clone())
+        .collect();
+    let mut old_by_path = HashMap::new();
+    for group in previous {
+        for path in group.all_paths() {
+            anyhow::ensure!(
+                old_by_path.insert(path.path_id.as_str(), group).is_none(),
+                "native path identity belongs to multiple committed groups"
+            );
+        }
+    }
+    let mut claimed = HashSet::new();
+    let mut seen_paths = HashSet::new();
+    let mut result = Vec::new();
+    for mut candidate in desired {
+        normalize_paths(&mut candidate.paths, &mut seen_paths)?;
+        let canonical = candidate.paths.remove(0);
+        let aliases = candidate.paths;
+        let content_owner = old_by_content.get(candidate.content_id.as_str()).copied();
+        let mut path_owners: BTreeSet<&str> = std::iter::once(&canonical)
+            .chain(aliases.iter())
+            .filter_map(|path| old_by_path.get(path.path_id.as_str()).copied())
+            .filter(|owner| !surviving_content.contains(owner.content_id.as_str()))
+            .map(|owner| owner.group_id.as_str())
+            .collect();
+        let group_id = if let Some(owner) = content_owner {
+            anyhow::ensure!(
+                path_owners.is_empty() || path_owners.contains(owner.group_id.as_str()),
+                "desired group has conflicting content and path identities"
+            );
+            owner.group_id.clone()
+        } else if path_owners.len() == 1 {
+            path_owners.pop_first().unwrap().to_string()
+        } else if path_owners.is_empty() {
+            format!(
+                "axg1-{:032x}",
+                xxhash_rust::xxh3::xxh3_128(
+                    format!("{}\0{}", candidate.content_id, canonical.path_id).as_bytes()
+                )
+            )
+        } else {
+            anyhow::bail!("desired content merges multiple historical groups");
+        };
+        anyhow::ensure!(claimed.insert(group_id.clone()), "group claimed twice");
+        candidate.dataset_slugs.sort();
+        candidate.dataset_slugs.dedup();
+        result.push(ManifestGroup {
+            group_id,
+            content_id: candidate.content_id,
+            content_digest: candidate.content_digest,
+            content_size: candidate.content_size,
+            canonical,
+            aliases,
+            dataset_slugs: candidate.dataset_slugs,
+            expected_records: candidate.expected_records,
+            expected_passages: candidate.expected_passages,
+            expected_vectors: candidate.expected_vectors,
+            expected_junk_records: candidate.expected_junk_records,
+            expected_records_by_dataset: candidate.expected_records_by_dataset,
+        });
+    }
+    result.sort_by(|left, right| left.group_id.cmp(&right.group_id));
+    Ok(result)
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+fn canonical_path(paths: &[ManifestPath]) -> (bool, &str) {
+    paths
+        .iter()
+        .map(|path| (path.is_symlink, path.path_id.as_str()))
+        .min()
+        .unwrap_or((true, ""))
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+fn normalize_paths(paths: &mut [ManifestPath], seen: &mut HashSet<String>) -> Result<()> {
+    anyhow::ensure!(!paths.is_empty(), "desired content group has no paths");
+    for path in paths.iter() {
+        anyhow::ensure!(
+            native_path_id_supported(&path.path_id),
+            "path {} has no supported reversible native identity",
+            path.rel
+        );
+        anyhow::ensure!(
+            seen.insert(path.path_id.clone()),
+            "native path identity occurs more than once"
+        );
+    }
+    paths.sort_by(|left, right| {
+        (left.is_symlink, left.path_id.as_str()).cmp(&(right.is_symlink, right.path_id.as_str()))
+    });
+    Ok(())
+}
+
+fn native_path_id_supported(path_id: &str) -> bool {
+    let valid_hex = |hex: &str, width: usize| {
+        !hex.is_empty()
+            && hex.len().is_multiple_of(width)
+            && hex.bytes().all(|byte| byte.is_ascii_hexdigit())
+    };
+    path_id
+        .strip_prefix("unix:")
+        .is_some_and(|hex| valid_hex(hex, 2))
+        || path_id
+            .strip_prefix("windows:")
+            .is_some_and(|hex| valid_hex(hex, 4))
+}
+
+fn validate_manifest(manifest: &GenerationManifest, legacy: bool) -> Result<()> {
+    if manifest.generation == 0 && legacy {
+        anyhow::ensure!(
+            manifest.execution.is_none(),
+            "legacy generation zero cannot invent execution identity"
+        );
+    } else {
+        let execution = manifest
+            .execution
+            .as_ref()
+            .context("new generation requires complete execution identity")?;
+        anyhow::ensure!(
+            execution.version == EXECUTION_IDENTITY_VERSION,
+            "unsupported execution identity version"
+        );
+        anyhow::ensure!(
+            !execution.graph_enabled
+                && execution.brain == "disabled"
+                && execution.detector_identity == "disabled",
+            "incremental generation manifests require graph-disabled execution identity"
+        );
+        for (name, value) in [
+            ("root_identity", execution.root_identity.as_str()),
+            ("url", execution.url.as_str()),
+            ("prefix", execution.prefix.as_str()),
+            ("chunker_identity", execution.chunker_identity.as_str()),
+            (
+                "embedding_identity_sha256",
+                execution.embedding_identity_sha256.as_str(),
+            ),
+            ("embedding_backend", execution.embedding_backend.as_str()),
+            (
+                "embedding_semantic_contract",
+                execution.embedding_semantic_contract.as_str(),
+            ),
+            ("detector_identity", execution.detector_identity.as_str()),
+            ("schema_identity", execution.schema_identity.as_str()),
+            ("index_identity", execution.index_identity.as_str()),
+        ] {
+            anyhow::ensure!(!value.is_empty(), "execution identity {name} is empty");
+        }
+        anyhow::ensure!(
+            execution.embedding_identity_sha256.len() == 64
+                && execution
+                    .embedding_identity_sha256
+                    .bytes()
+                    .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()),
+            "embedding execution identity must be a lowercase SHA-256 digest"
+        );
+        anyhow::ensure!(
+            execution.embedding_dimension != Some(0),
+            "embedding execution dimension must be positive when the server pins one"
+        );
+        anyhow::ensure!(
+            execution.embedding_resumable,
+            "a durable generation requires a resumable embedding execution identity"
+        );
+        match &execution.source_policy {
+            SourceExecutionPolicy::DurableSnapshot {
+                reference,
+                snapshot_digest,
+            } => anyhow::ensure!(
+                !reference.is_empty() && !snapshot_digest.is_empty(),
+                "durable source snapshot identity is incomplete"
+            ),
+            SourceExecutionPolicy::AbortOnSourceChange { inventory_digest } => {
+                anyhow::ensure!(
+                    !inventory_digest.is_empty(),
+                    "abort-on-change policy needs inventory digest"
+                )
+            }
+        }
+    }
+    validate_groups(&manifest.groups)?;
+    validate_plan_projection(&manifest.plan, &manifest.groups)
+}
+
+fn validate_groups(groups: &[ManifestGroup]) -> Result<()> {
+    let mut group_ids = HashSet::new();
+    let mut content_ids = HashSet::new();
+    let mut path_ids = HashSet::new();
+    for group in groups {
+        anyhow::ensure!(group_ids.insert(&group.group_id), "duplicate group ID");
+        anyhow::ensure!(
+            content_ids.insert(&group.content_id),
+            "duplicate collision-safe content ID"
+        );
+        anyhow::ensure!(
+            !group.content_digest.is_empty(),
+            "group has no raw content digest"
+        );
+        anyhow::ensure!(
+            native_path_id_supported(&group.canonical.path_id),
+            "canonical path identity is unsupported"
+        );
+        anyhow::ensure!(
+            !group.canonical.is_symlink || group.aliases.iter().all(|p| p.is_symlink),
+            "a symlink cannot be canonical while a real path survives"
+        );
+        anyhow::ensure!(
+            group.aliases.iter().all(|alias| {
+                (group.canonical.is_symlink, group.canonical.path_id.as_str())
+                    < (alias.is_symlink, alias.path_id.as_str())
+            }),
+            "canonical path does not have the lowest canonical rank"
+        );
+        for path in group.all_paths() {
+            anyhow::ensure!(
+                path_ids.insert(&path.path_id),
+                "native path identity occurs in multiple groups"
+            );
+        }
+        anyhow::ensure!(
+            group.aliases.windows(2).all(|pair| {
+                (pair[0].is_symlink, pair[0].path_id.as_str())
+                    < (pair[1].is_symlink, pair[1].path_id.as_str())
+            }),
+            "aliases are not in canonical rank order"
+        );
+        anyhow::ensure!(
+            group.dataset_slugs.windows(2).all(|pair| pair[0] < pair[1]),
+            "dataset assignments are not canonical"
+        );
+        // The per-dataset ledger is the identity the records were sealed under,
+        // so it can only name datasets the group actually feeds and must add up
+        // to the group total. Checking it here moves detection of a fan-out
+        // accounting error from catalog-publish time — where it surfaces as an
+        // opaque read-back mismatch that aborts a finished run — to manifest
+        // validation, before anything is published.
+        anyhow::ensure!(
+            group
+                .expected_records_by_dataset
+                .keys()
+                .all(|slug| group.dataset_slugs.contains(slug)),
+            "per-dataset record ledger names a dataset the group does not feed"
+        );
+        anyhow::ensure!(
+            group.expected_records_by_dataset.is_empty()
+                || group
+                    .expected_records_by_dataset
+                    .values()
+                    .try_fold(0u64, |sum, count| sum.checked_add(*count))
+                    == Some(group.expected_records),
+            "per-dataset record ledger disagrees with the group record total"
+        );
+    }
+    anyhow::ensure!(
+        groups
+            .windows(2)
+            .all(|pair| pair[0].group_id < pair[1].group_id),
+        "manifest groups are not canonical"
+    );
+    Ok(())
+}
+
+/// The part of [`PendingSync::new`]'s validation that needs only the plan and
+/// the content groups derived from it, not the sealed snapshot's counts: group
+/// shape and canonical rank ([`validate_groups`]) and the plan's projection
+/// onto the groups ([`validate_plan_projection`]).
+///
+/// #1723: those checks ran only after `create_prepared_snapshot_reporting`
+/// had sealed the whole corpus, so a plan that could never be accepted cost a
+/// full snapshot pass (~25 minutes on the report's 24k-file corpus) before it
+/// was refused, on every attempt. Run on a canonicalized copy, ordered exactly
+/// as `PendingSync::new` orders the real manifest, so it cannot refuse
+/// anything that validation would accept. The groups' counts are still zero
+/// here; neither check reads them.
+pub(crate) fn preflight_plan_projection(plan: &Plan, groups: &[ManifestGroup]) -> Result<()> {
+    let mut manifest = GenerationManifest {
+        generation: 0,
+        execution: None,
+        plan: plan.clone(),
+        groups: groups.to_vec(),
+    };
+    canonicalize_manifest_order(&mut manifest);
+    validate_groups(&manifest.groups)?;
+    validate_plan_projection(&manifest.plan, &manifest.groups)
+}
+
+fn validate_plan_projection(plan: &Plan, groups: &[ManifestGroup]) -> Result<()> {
+    let dataset_slugs: HashSet<&str> = plan
+        .datasets
+        .iter()
+        .map(|dataset| dataset.slug.as_str())
+        .collect();
+    anyhow::ensure!(
+        dataset_slugs.len() == plan.datasets.len(),
+        "plan has duplicate dataset slugs"
+    );
+    // #929: a refused dataset is recorded, never published. It cannot also be
+    // a live dataset, and every file it cost must be out of `files` and in
+    // `junk_files` — so the catalog that is projected from this plan names it.
+    let junk_keys: HashSet<&str> = plan
+        .junk_files
+        .iter()
+        .map(|junk| junk.file_key.as_str())
+        .collect();
+    let mut refused_slugs = HashSet::new();
+    for refusal in &plan.refused_datasets {
+        anyhow::ensure!(
+            refused_slugs.insert(refusal.dataset.slug.as_str())
+                && !dataset_slugs.contains(refusal.dataset.slug.as_str()),
+            "plan refuses dataset {} twice, or both refuses and publishes it",
+            refusal.dataset.slug
+        );
+        anyhow::ensure!(
+            refusal.file_keys.windows(2).all(|pair| pair[0] < pair[1]),
+            "refused dataset {} file keys are not canonical",
+            refusal.dataset.slug
+        );
+        for key in &refusal.file_keys {
+            anyhow::ensure!(
+                !plan.files.contains_key(key) && junk_keys.contains(key.as_str()),
+                "refused dataset {} lists {key}, which is not recorded as junk",
+                refusal.dataset.slug
+            );
+        }
+    }
+    let groups_by_content: HashMap<&str, &ManifestGroup> = groups
+        .iter()
+        .map(|group| (group.content_id.as_str(), group))
+        .collect();
+    anyhow::ensure!(
+        plan.files.len() == groups.len(),
+        "plan files and manifest groups disagree"
+    );
+    for (content_id, assignment) in &plan.files {
+        let group = groups_by_content
+            .get(content_id.as_str())
+            .context("plan file has no manifest group")?;
+        anyhow::ensure!(
+            assignment.rel == group.canonical.rel
+                && assignment.path_id == group.canonical.path_id
+                && assignment.is_symlink == Some(group.canonical.is_symlink)
+                && assignment.content_digest.as_deref() == Some(group.content_digest.as_str()),
+            "plan canonical projection disagrees with manifest group"
+        );
+        let mut assigned: Vec<String> = assignment
+            .assignments
+            .iter()
+            .map(|(_, slug)| slug.clone())
+            .collect();
+        assigned.sort();
+        assigned.dedup();
+        anyhow::ensure!(
+            assigned == group.dataset_slugs,
+            "plan dataset projection disagrees with manifest group"
+        );
+        anyhow::ensure!(
+            assigned
+                .iter()
+                .all(|slug| dataset_slugs.contains(slug.as_str())),
+            "group references absent dataset schema"
+        );
+    }
+    let expected_aliases: BTreeSet<(String, String, String, bool, String)> = groups
+        .iter()
+        .flat_map(|group| {
+            group.aliases.iter().map(|alias| {
+                (
+                    group.content_id.clone(),
+                    alias.rel.clone(),
+                    alias.path_id.clone(),
+                    alias.is_symlink,
+                    group.canonical.rel.clone(),
+                )
+            })
+        })
+        .collect();
+    let actual_aliases: BTreeSet<(String, String, String, bool, String)> = plan
+        .duplicate_files
+        .iter()
+        .map(|alias: &DuplicateFile| -> Result<_> {
+            Ok((
+                alias.file_key.clone(),
+                alias.rel.clone(),
+                alias.path_id.clone(),
+                alias
+                    .is_symlink
+                    .context("plan alias has no persisted symlink rank")?,
+                alias.duplicate_of.clone(),
+            ))
+        })
+        .collect::<Result<_>>()?;
+    anyhow::ensure!(
+        actual_aliases == expected_aliases,
+        "plan alias projection disagrees with manifest groups"
+    );
+    Ok(())
+}
+
+fn canonicalize_manifest_order(manifest: &mut GenerationManifest) {
+    manifest.plan.datasets.sort_by(|left, right| {
+        left.slug
+            .cmp(&right.slug)
+            .then_with(|| left.index.cmp(&right.index))
+            .then_with(|| left.group.cmp(&right.group))
+    });
+    for dataset in &mut manifest.plan.datasets {
+        dataset
+            .specs
+            .sort_by(|left, right| left.name.cmp(&right.name));
+    }
+    for assignment in manifest.plan.files.values_mut() {
+        assignment.assignments.sort();
+        assignment.assignments.dedup();
+    }
+    manifest.plan.junk_files.sort_by(|left, right| {
+        left.file_key
+            .cmp(&right.file_key)
+            .then_with(|| left.rel.cmp(&right.rel))
+    });
+    manifest.plan.duplicate_files.sort_by(|left, right| {
+        left.file_key
+            .cmp(&right.file_key)
+            .then_with(|| left.path_id.cmp(&right.path_id))
+            .then_with(|| left.rel.cmp(&right.rel))
+    });
+    for group in &mut manifest.groups {
+        group.aliases.sort_by(|left, right| {
+            (left.is_symlink, left.path_id.as_str())
+                .cmp(&(right.is_symlink, right.path_id.as_str()))
+        });
+        group.dataset_slugs.sort();
+        group.dataset_slugs.dedup();
+    }
+    manifest
+        .groups
+        .sort_by(|left, right| left.group_id.cmp(&right.group_id));
+}
+
+pub fn manifest_digest(manifest: &GenerationManifest) -> Result<String> {
+    let mut normalized = manifest.clone();
+    canonicalize_manifest_order(&mut normalized);
+    let encoded = canonical_json_bytes(&normalized)?;
+    Ok(format!(
+        "axm1-{:032x}",
+        xxhash_rust::xxh3::xxh3_128(&encoded)
+    ))
+}
+
+pub fn operation_hash(operations: &[SyncOperation]) -> Result<String> {
+    let mut normalized = operations.to_vec();
+    normalized.sort();
+    let encoded = canonical_json_bytes(&normalized)?;
+    Ok(format!(
+        "axo1-{:032x}",
+        xxhash_rust::xxh3::xxh3_128(&encoded)
+    ))
+}
+
+fn canonical_json_bytes<T: Serialize + ?Sized>(value: &T) -> Result<Vec<u8>> {
+    fn canonicalize(value: Value) -> Value {
+        match value {
+            Value::Object(object) => {
+                let sorted: BTreeMap<String, Value> = object
+                    .into_iter()
+                    .map(|(key, value)| (key, canonicalize(value)))
+                    .collect();
+                Value::Object(sorted.into_iter().collect())
+            }
+            Value::Array(values) => Value::Array(values.into_iter().map(canonicalize).collect()),
+            scalar => scalar,
+        }
+    }
+    Ok(serde_json::to_vec(&canonicalize(serde_json::to_value(
+        value,
+    )?))?)
+}
+
+pub fn apply_begin(
+    committed: &CommittedManifest,
+    pending: &mut Option<PendingSync>,
+    begin: PendingSync,
+) -> Result<()> {
+    anyhow::ensure!(pending.is_none(), "another sync is already pending");
+    begin.validate_against(committed)?;
+    *pending = Some(begin);
+    Ok(())
+}
+
+#[derive(Clone, Copy)]
+struct UniqueValue;
+
+impl<'de> DeserializeSeed<'de> for UniqueValue {
+    type Value = Value;
+
+    fn deserialize<D>(self, deserializer: D) -> std::result::Result<Value, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        deserializer.deserialize_any(self)
+    }
+}
+
+impl<'de> Visitor<'de> for UniqueValue {
+    type Value = Value;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("JSON without duplicate object keys")
+    }
+
+    fn visit_bool<E>(self, value: bool) -> std::result::Result<Value, E> {
+        Ok(Value::Bool(value))
+    }
+
+    fn visit_i64<E>(self, value: i64) -> std::result::Result<Value, E> {
+        Ok(Value::Number(value.into()))
+    }
+
+    fn visit_u64<E>(self, value: u64) -> std::result::Result<Value, E> {
+        Ok(Value::Number(value.into()))
+    }
+
+    fn visit_f64<E>(self, value: f64) -> std::result::Result<Value, E>
+    where
+        E: serde::de::Error,
+    {
+        serde_json::Number::from_f64(value)
+            .map(Value::Number)
+            .ok_or_else(|| E::custom("non-finite JSON number"))
+    }
+
+    fn visit_str<E>(self, value: &str) -> std::result::Result<Value, E>
+    where
+        E: serde::de::Error,
+    {
+        Ok(Value::String(value.to_owned()))
+    }
+
+    fn visit_string<E>(self, value: String) -> std::result::Result<Value, E> {
+        Ok(Value::String(value))
+    }
+
+    fn visit_none<E>(self) -> std::result::Result<Value, E> {
+        Ok(Value::Null)
+    }
+
+    fn visit_unit<E>(self) -> std::result::Result<Value, E> {
+        Ok(Value::Null)
+    }
+
+    fn visit_seq<A>(self, mut sequence: A) -> std::result::Result<Value, A::Error>
+    where
+        A: SeqAccess<'de>,
+    {
+        let mut values = Vec::new();
+        while let Some(value) = sequence.next_element_seed(self)? {
+            values.push(value);
+        }
+        Ok(Value::Array(values))
+    }
+
+    fn visit_map<A>(self, mut object: A) -> std::result::Result<Value, A::Error>
+    where
+        A: MapAccess<'de>,
+    {
+        let mut values = serde_json::Map::new();
+        while let Some(key) = object.next_key::<String>()? {
+            if values.contains_key(&key) {
+                return Err(A::Error::custom(format!(
+                    "duplicate JSON object key {key:?}"
+                )));
+            }
+            values.insert(key, object.next_value_seed(self)?);
+        }
+        Ok(Value::Object(values))
+    }
+}
+
+pub(crate) fn decode_unique_durable_json(bytes: &[u8]) -> Result<Value> {
+    // Generic JSON maps accept duplicate keys with last-key semantics. A
+    // duplicate `kind` could otherwise make the ordinary routing decoder and
+    // an exact payload decoder disagree about which durable invariant applies;
+    // nested duplicates are equally ambiguous. Journal replay therefore
+    // rejects duplicates for every durable record before routing it.
+    let mut uniqueness = serde_json::Deserializer::from_slice(bytes);
+    let value = UniqueValue
+        .deserialize(&mut uniqueness)
+        .context("validate durable journal record structure")?;
+    uniqueness
+        .end()
+        .context("validate durable journal record trailing bytes")?;
+    Ok(value)
+}
+
+fn decode_durable_sync_begin_validated(bytes: &[u8]) -> Result<PendingSync> {
+    // simd-json 0.14.3 `src/serde.rs:56-62` deserializes directly from the
+    // supplied bytes. Restrict it to this persistence boundary: request and
+    // bulk JSON keep serde_json's default parser. The exact Value retains the
+    // original IEEE-754 bits when the ordinary parser lands on an adjacent
+    // value; conversion from Value into PendingSync performs no decimal parse.
+    let mut exact_bytes = bytes.to_vec();
+    let exact: Value = simd_json::serde::from_slice(&mut exact_bytes)
+        .context("decode durable sync_begin with exact floats")?;
+    anyhow::ensure!(
+        record_str(&exact, "kind")? == "sync_begin",
+        "exact durable decoder disagrees with sync_begin routing"
+    );
+    serde_json::from_value(exact).context("decode durable sync_begin payload")
+}
+
+#[cfg(test)]
+fn decode_durable_sync_begin(bytes: &[u8]) -> Result<PendingSync> {
+    decode_unique_durable_json(bytes)?;
+    decode_durable_sync_begin_validated(bytes)
+}
+
+pub(crate) fn replay_durable_record(
+    record: &Value,
+    bytes: &[u8],
+    committed: &mut Option<CommittedManifest>,
+    pending: &mut Option<PendingSync>,
+) -> Result<()> {
+    if record_str(record, "kind")? != "sync_begin" {
+        return replay_record(record, committed, pending);
+    }
+    // Journal callers validate uniqueness before routing every record. Keep
+    // the exact decoder single-pass here rather than parsing sync_begin a
+    // redundant fourth time.
+    let begin = decode_durable_sync_begin_validated(bytes)?;
+    apply_begin(
+        committed
+            .as_ref()
+            .context("sync_begin has no committed base manifest")?,
+        pending,
+        begin,
+    )
+}
+
+pub fn is_sync_record_kind(kind: &str) -> bool {
+    matches!(
+        kind,
+        "sync_bootstrap"
+            | "sync_begin"
+            | "sync_operation_state"
+            | "sync_validated"
+            | "sync_commit"
+            | "sync_abort"
+    )
+}
+
+pub fn replay_record(
+    record: &Value,
+    committed: &mut Option<CommittedManifest>,
+    pending: &mut Option<PendingSync>,
+) -> Result<()> {
+    let kind = record_str(record, "kind")?;
+    match kind {
+        "sync_bootstrap" => {
+            anyhow::ensure!(
+                pending.is_none(),
+                "sync_bootstrap cannot replace pending sync"
+            );
+            anyhow::ensure!(
+                committed.is_none(),
+                "sync_bootstrap cannot replace committed authority"
+            );
+            let manifest: CommittedManifest = serde_json::from_value(
+                record
+                    .get("manifest")
+                    .cloned()
+                    .context("sync_bootstrap has no manifest")?,
+            )
+            .context("decode durable sync_bootstrap")?;
+            manifest.validate_genesis()?;
+            *committed = Some(manifest);
+            Ok(())
+        }
+        "sync_begin" => {
+            let begin: PendingSync =
+                serde_json::from_value(record.clone()).context("decode durable sync_begin")?;
+            apply_begin(
+                committed
+                    .as_ref()
+                    .context("sync_begin has no committed base manifest")?,
+                pending,
+                begin,
+            )
+        }
+        "sync_operation_state" => {
+            let tx = record_str(record, "tx_id")?;
+            let operation = record_str(record, "operation_id")?;
+            let state = serde_json::from_value(
+                record
+                    .get("state")
+                    .cloned()
+                    .context("sync operation state is missing")?,
+            )?;
+            pending
+                .as_mut()
+                .context("operation state has no pending sync")?
+                .apply_operation_state(tx, operation, state)
+        }
+        "sync_validated" => pending
+            .as_mut()
+            .context("validation has no pending sync")?
+            .apply_validated(
+                record_str(record, "tx_id")?,
+                record_str(record, "desired_manifest_digest")?,
+            ),
+        "sync_commit" => {
+            let active = pending.take().context("commit has no pending sync")?;
+            *committed = Some(active.apply_commit(
+                record_str(record, "tx_id")?,
+                record_str(record, "desired_manifest_digest")?,
+            )?);
+            Ok(())
+        }
+        "sync_abort" => {
+            let active = pending.as_ref().context("abort has no pending sync")?;
+            anyhow::ensure!(
+                active.tx_id == record_str(record, "tx_id")?
+                    && active.desired_manifest_digest
+                        == record_str(record, "desired_manifest_digest")?,
+                "abort does not bind the pending transaction and manifest"
+            );
+            *pending = None;
+            Ok(())
+        }
+        _ => anyhow::bail!("unknown sync record kind {kind}"),
+    }
+}
+
+fn record_str<'a>(record: &'a Value, field: &str) -> Result<&'a str> {
+    record
+        .get(field)
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow::anyhow!("sync record has no {field}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::{FileAssignment, PlanDataset};
+    use serde_json::json;
+
+    fn path(id_hex: &str, symlink: bool) -> ManifestPath {
+        ManifestPath {
+            path_id: format!("unix:{id_hex}"),
+            rel: format!("{id_hex}.pdf"),
+            is_symlink: symlink,
+        }
+    }
+
+    fn group(id: &str, content: &str, path: ManifestPath) -> ManifestGroup {
+        ManifestGroup {
+            group_id: id.into(),
+            content_id: content.into(),
+            content_digest: format!("digest-{content}"),
+            content_size: 10,
+            canonical: path,
+            aliases: Vec::new(),
+            dataset_slugs: vec!["reports".into()],
+            expected_records: 1,
+            expected_passages: 1,
+            expected_vectors: 1,
+            expected_junk_records: 0,
+            expected_records_by_dataset: BTreeMap::from([("reports".to_string(), 1)]),
+        }
+    }
+
+    fn desired(content: &str, paths: Vec<ManifestPath>) -> DesiredContentGroup {
+        DesiredContentGroup {
+            content_id: content.into(),
+            content_digest: format!("digest-{content}"),
+            content_size: 10,
+            paths,
+            dataset_slugs: vec!["reports".into()],
+            expected_records: 1,
+            expected_passages: 1,
+            expected_vectors: 1,
+            expected_junk_records: 0,
+            expected_records_by_dataset: BTreeMap::from([("reports".to_string(), 1)]),
+        }
+    }
+
+    #[test]
+    fn operation_state_split_semantics_and_membership_index_hold() {
+        // #1224: the journal records Started/Committed per operation through
+        // validate-then-record, and a resumed run replays every state event
+        // again on load. Pin the split's semantics — validate is pure,
+        // apply is validate+record — and the derived membership index,
+        // including across Clone and across a restructured operations list.
+        let operations: Vec<SyncOperation> = (0..1000)
+            .map(|n| SyncOperation {
+                operation_id: format!("op-{n}"),
+                kind: SyncOperationKind::Upsert,
+                group_id: format!("g{n}"),
+                desired_content_id: Some(format!("content-{n}")),
+            })
+            .collect();
+        let mut pending = PendingSync {
+            tx_id: "tx".into(),
+            base_generation: 0,
+            base_manifest_digest: "base".into(),
+            desired_manifest_digest: "desired".into(),
+            operation_hash: "hash".into(),
+            desired: GenerationManifest {
+                generation: 1,
+                execution: None,
+                plan: Plan::default(),
+                groups: Vec::new(),
+            },
+            operations,
+            operation_states: BTreeMap::new(),
+            validated: false,
+            operation_id_index: std::sync::OnceLock::new(),
+        };
+
+        // Known ids validate, unknown ids stay rejected — through the index
+        // once built, and on a clone that inherited the built index.
+        assert!(pending
+            .validate_operation_state("tx", "op-0", &SyncOperationState::Started)
+            .is_ok());
+        assert!(pending
+            .validate_operation_state("tx", "missing", &SyncOperationState::Started)
+            .is_err());
+        let cloned = pending.clone();
+        assert!(cloned
+            .validate_operation_state("tx", "op-1", &SyncOperationState::Started)
+            .is_ok());
+        assert!(cloned
+            .validate_operation_state("tx", "missing", &SyncOperationState::Started)
+            .is_err());
+
+        // Transitions keep their pre-split rules: Committed without Started
+        // is illegal, Started then Committed is legal, a repeated Committed
+        // is accepted, and a step back to Started is not.
+        assert!(pending
+            .validate_operation_state("tx", "op-0", &SyncOperationState::Committed)
+            .is_err());
+        pending
+            .apply_operation_state("tx", "op-0", SyncOperationState::Started)
+            .unwrap();
+        pending
+            .apply_operation_state("tx", "op-0", SyncOperationState::Committed)
+            .unwrap();
+        pending
+            .apply_operation_state("tx", "op-0", SyncOperationState::Committed)
+            .unwrap();
+        assert!(pending
+            .validate_operation_state("tx", "op-0", &SyncOperationState::Started)
+            .is_err());
+
+        // A wrong tx is rejected and records nothing; validate alone never
+        // mutates.
+        assert!(pending
+            .apply_operation_state("other", "op-1", SyncOperationState::Started)
+            .is_err());
+        assert!(!pending.operation_states.contains_key("op-1"));
+        assert!(pending
+            .validate_operation_state("tx", "op-2", &SyncOperationState::Committed)
+            .is_err());
+        assert!(!pending.operation_states.contains_key("op-2"));
+
+        // A restructured operations list must not be answered from a stale
+        // index built for the old shape.
+        let mut shrunk = pending.clone();
+        shrunk.operations.clear();
+        assert!(shrunk
+            .validate_operation_state("tx", "op-3", &SyncOperationState::Started)
+            .is_err());
+    }
+
+    #[test]
+    fn durable_sync_begin_decoder_preserves_inferred_float_bits() {
+        let original = 245.44444444444446_f64;
+        let replayed = decode_durable_sync_begin(include_bytes!(
+            "../tests/fixtures/issue_283_sync_begin.json"
+        ))
+        .unwrap()
+        .desired
+        .plan
+        .datasets[0]
+            .specs[0]
+            .avg_len;
+        assert_eq!(
+            replayed.to_bits(),
+            original.to_bits(),
+            "the durable decimal must recover the exact inferred f64"
+        );
+    }
+
+    #[test]
+    fn pre_fix_sync_begin_recovers_digest_and_still_rejects_changes() {
+        // Captured before `serde_json/float_roundtrip` was enabled. Its digest
+        // was computed from the original in-memory `avg_len` bits, while the
+        // JSON contains the shortest round-tripping decimal for those bits.
+        let pending = decode_durable_sync_begin(include_bytes!(
+            "../tests/fixtures/issue_283_sync_begin.json"
+        ))
+        .unwrap();
+        let base = CommittedManifest::genesis().unwrap();
+        assert_eq!(
+            base.manifest_digest,
+            "axm1-225526cc79184af5df2509f2e6908557"
+        );
+        assert_eq!(
+            pending.desired.plan.datasets[0].specs[0].avg_len.to_bits(),
+            245.44444444444446_f64.to_bits()
+        );
+        pending.validate_against(&base).unwrap();
+
+        let mut changed = pending;
+        changed.desired.plan.datasets[0].specs[0].avg_len += 1.0;
+        assert!(
+            changed.validate_against(&base).is_err(),
+            "a genuinely changed manifest must not inherit the persisted digest"
+        );
+    }
+
+    #[test]
+    fn pre_fix_sync_begin_reopens_from_durable_journal_without_digest_drift() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = CommittedManifest::genesis().unwrap();
+        // NDJSON requires one physical line. Remove formatting whitespace
+        // mechanically; never parse through the ordinary float decoder while
+        // constructing the historical record under test.
+        let historical_begin = include_str!("../tests/fixtures/issue_283_sync_begin.json")
+            .lines()
+            .collect::<String>();
+        assert!(historical_begin.contains("\"avg_len\": 245.44444444444446"));
+        let records = [
+            serde_json::to_string(&json!({
+                "v": 1,
+                "kind": "run",
+                "root": "root",
+                "url": "url",
+                "prefix": "prefix",
+                "bulk_timeout_secs": 300,
+                "run_id": "run-issue-283-fixture",
+                "started": "2026-08-10T00:00:00Z"
+            }))
+            .unwrap(),
+            serde_json::to_string(&json!({"kind": "sync_bootstrap", "manifest": base})).unwrap(),
+            historical_begin,
+        ];
+        let mut journal_bytes = records.join("\n").into_bytes();
+        journal_bytes.push(b'\n');
+        std::fs::write(dir.path().join("journal.ndjson"), journal_bytes).unwrap();
+
+        // This is the durable resume boundary only: Journal::open reads the
+        // checked-in pre-fix sync_begin from disk, validates it against the
+        // committed generation, and appends the ordinary resume marker. It
+        // deliberately does not claim to replay network operations.
+        let reopened =
+            crate::state::Journal::open(dir.path(), "root", "url", "prefix", 300, false).unwrap();
+        assert!(reopened.resumed);
+        assert_eq!(
+            reopened
+                .committed_manifest
+                .as_ref()
+                .unwrap()
+                .manifest_digest,
+            "axm1-225526cc79184af5df2509f2e6908557"
+        );
+        let pending = reopened.pending_sync.as_ref().unwrap();
+        assert_eq!(
+            pending.desired_manifest_digest,
+            "axm1-5e314eb29c9617433af240313b94e544"
+        );
+        assert_eq!(
+            manifest_digest(&pending.desired).unwrap(),
+            pending.desired_manifest_digest
+        );
+        assert_eq!(
+            pending.desired.plan.datasets[0].specs[0].avg_len.to_bits(),
+            245.44444444444446_f64.to_bits()
+        );
+    }
+
+    #[test]
+    fn durable_sync_begin_rejects_duplicate_keys_at_any_depth() {
+        let fixture = include_str!("../tests/fixtures/issue_283_sync_begin.json");
+        let duplicate = fixture.replacen(
+            "\"avg_len\": 245.44444444444446,",
+            "\"avg_len\": 1.0, \"avg_len\": 245.44444444444446,",
+            1,
+        );
+        let error = decode_durable_sync_begin(duplicate.as_bytes()).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("duplicate JSON object key \"avg_len\""),
+            "{error:#}"
+        );
+    }
+
+    #[test]
+    fn durable_sync_begin_rejects_malformed_trailing_and_deep_input() {
+        let fixture = include_str!("../tests/fixtures/issue_283_sync_begin.json");
+        assert!(decode_durable_sync_begin(b"{\"kind\":\"sync_begin\"").is_err());
+
+        let trailing = format!("{fixture}\n{{}}");
+        let trailing_error = decode_durable_sync_begin(trailing.as_bytes()).unwrap_err();
+        assert!(
+            format!("{trailing_error:#}").contains("trailing"),
+            "{trailing_error:#}"
+        );
+
+        let mut deep = String::from("{\"kind\":\"sync_begin\",\"ignored\":");
+        deep.push_str(&"[".repeat(140));
+        deep.push_str("null");
+        deep.push_str(&"]".repeat(140));
+        deep.push('}');
+        assert!(decode_durable_sync_begin(deep.as_bytes()).is_err());
+    }
+
+    #[test]
+    fn durable_sync_begin_requires_both_parsers_to_route_sync_begin() {
+        let routed = json!({"kind": "sync_begin"});
+        let raw = br#"{"kind":"sync_commit","tx_id":"tx","desired_manifest_digest":"digest"}"#;
+        let mut committed = Some(CommittedManifest::genesis().unwrap());
+        let error = replay_durable_record(&routed, raw, &mut committed, &mut None).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("disagrees with sync_begin routing"),
+            "{error:#}"
+        );
+    }
+
+    #[test]
+    fn alternate_decoder_is_not_used_for_other_durable_records() {
+        let genesis = CommittedManifest::genesis().unwrap();
+        let record = json!({"kind": "sync_bootstrap", "manifest": genesis});
+        let mut committed = None;
+        replay_durable_record(
+            &record,
+            b"not parsed for a non-sync_begin record",
+            &mut committed,
+            &mut None,
+        )
+        .unwrap();
+        assert_eq!(committed.unwrap().generation, 0);
+    }
+
+    #[test]
+    fn bootstrap_replay_accepts_only_exact_empty_genesis() {
+        let genesis = CommittedManifest::genesis().unwrap();
+        let record = serde_json::json!({
+            "kind": "sync_bootstrap",
+            "manifest": genesis,
+        });
+        let mut committed = None;
+        let mut pending = None;
+        replay_record(&record, &mut committed, &mut pending).unwrap();
+        assert_eq!(committed.unwrap().generation, 0);
+
+        let mut non_genesis = CommittedManifest::genesis().unwrap();
+        non_genesis.generation = 1;
+        let record = serde_json::json!({
+            "kind": "sync_bootstrap",
+            "manifest": non_genesis,
+        });
+        assert!(replay_record(&record, &mut None, &mut None).is_err());
+
+        let mut committed = Some(CommittedManifest::genesis().unwrap());
+        let record = serde_json::json!({
+            "kind": "sync_bootstrap",
+            "manifest": CommittedManifest::genesis().unwrap(),
+        });
+        assert!(replay_record(&record, &mut committed, &mut None).is_err());
+    }
+
+    #[test]
+    fn canonical_prefers_real_then_native_bytes_including_non_utf8_identity() {
+        let groups = reconcile_groups(
+            &[],
+            vec![desired(
+                "content",
+                vec![path("ff", false), path("01", true), path("80", false)],
+            )],
+        )
+        .unwrap();
+        assert_eq!(groups[0].canonical.path_id, "unix:80");
+        assert!(!groups[0].canonical.is_symlink);
+    }
+
+    #[test]
+    fn equal_raw_digest_does_not_merge_distinct_collision_safe_content_ids() {
+        let mut a = desired("verified-a", vec![path("61", false)]);
+        let mut b = desired("verified-b", vec![path("62", false)]);
+        b.content_digest = a.content_digest.clone();
+        a.content_size = 9;
+        b.content_size = 9;
+        let groups = reconcile_groups(&[], vec![a, b]).unwrap();
+        assert_eq!(groups.len(), 2);
+        assert_ne!(groups[0].content_id, groups[1].content_id);
+    }
+
+    #[test]
+    fn changed_former_canonical_cannot_steal_surviving_content_group() {
+        let mut old = group("logical", "old-content", path("61", false));
+        old.aliases.push(path("62", false));
+        let result = reconcile_groups(
+            &[old],
+            vec![
+                desired("new-content", vec![path("61", false)]),
+                desired("old-content", vec![path("62", false)]),
+            ],
+        )
+        .unwrap();
+        assert_eq!(
+            result
+                .iter()
+                .find(|group| group.content_id == "old-content")
+                .unwrap()
+                .group_id,
+            "logical"
+        );
+    }
+
+    #[test]
+    fn operation_planner_covers_add_delete_metadata_and_mixed() {
+        let unchanged = group("same", "same", path("01", false));
+        let deleted = group("gone", "gone", path("02", false));
+        let metadata_old = group("meta", "meta", path("03", false));
+        let mut metadata_new = metadata_old.clone();
+        metadata_new.expected_records = 2;
+        let added = group("new", "new", path("04", false));
+        let operations = plan_operations(
+            &[deleted, metadata_old, unchanged.clone()],
+            &[added, metadata_new, unchanged],
+        );
+        assert_eq!(
+            operations
+                .iter()
+                .map(|operation| operation.kind.clone())
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from([
+                SyncOperationKind::Delete,
+                SyncOperationKind::Metadata,
+                SyncOperationKind::Upsert
+            ])
+        );
+    }
+
+    #[test]
+    fn legacy_nonempty_plan_requires_explicit_migration() {
+        let mut plan = Plan::default();
+        plan.files.insert(
+            "key".into(),
+            FileAssignment {
+                rel: "a.pdf".into(),
+                path_id: "unix:61".into(),
+                is_symlink: None,
+                family: "pdf".into(),
+                gzip: false,
+                content_digest: Some("digest".into()),
+                assignments: Vec::new(),
+                as_document: false,
+            },
+        );
+        assert!(matches!(
+            CommittedManifest::bootstrap_legacy(plan).unwrap(),
+            LegacyBootstrap::MigrationRequired { .. }
+        ));
+    }
+
+    #[test]
+    fn canonical_digest_ignores_hashmap_and_semantic_group_order() {
+        let mut first = Plan::default();
+        let mut second = Plan::default();
+        for (plan, order) in [(&mut first, ["a", "b"]), (&mut second, ["b", "a"])] {
+            for key in order {
+                plan.files.insert(
+                    key.into(),
+                    FileAssignment {
+                        rel: format!("{key}.pdf"),
+                        path_id: format!("unix:{:02x}", key.as_bytes()[0]),
+                        is_symlink: Some(false),
+                        family: "pdf".into(),
+                        gzip: false,
+                        content_digest: Some(format!("digest-{key}")),
+                        assignments: Vec::new(),
+                        as_document: false,
+                    },
+                );
+            }
+        }
+        let group_a = group("a", "a", path("61", false));
+        let group_b = group("b", "b", path("62", false));
+        let a = GenerationManifest {
+            generation: 0,
+            execution: None,
+            plan: first,
+            groups: vec![group_a.clone(), group_b.clone()],
+        };
+        let b = GenerationManifest {
+            generation: 0,
+            execution: None,
+            plan: second,
+            groups: vec![group_b, group_a],
+        };
+        assert_eq!(manifest_digest(&a).unwrap(), manifest_digest(&b).unwrap());
+    }
+
+    /// #360 back-compat: `manifest_digest` covers the serialized groups and
+    /// every committed generation is re-verified against it. A manifest sealed
+    /// before the per-dataset ledger existed must keep hashing to the value it
+    /// was sealed with, which is exactly what `skip_serializing_if` buys.
+    #[test]
+    fn a_manifest_without_the_per_dataset_ledger_keeps_its_sealed_digest() {
+        let mut sealed = group("a", "a", path("61", false));
+        sealed.expected_records_by_dataset = BTreeMap::new();
+        let manifest = GenerationManifest {
+            generation: 0,
+            execution: None,
+            plan: Plan::default(),
+            groups: vec![sealed.clone()],
+        };
+        let encoded = serde_json::to_string(&manifest).unwrap();
+        assert!(
+            !encoded.contains("expected_records_by_dataset"),
+            "an empty ledger must serialize to nothing: {encoded}"
+        );
+        let decoded: GenerationManifest = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(
+            manifest_digest(&decoded).unwrap(),
+            manifest_digest(&manifest).unwrap()
+        );
+        // Such a group is still attributable while it feeds one dataset, and
+        // honestly unattributable once it fans out.
+        assert_eq!(sealed.expected_records_for("reports"), Some(1));
+        assert_eq!(sealed.expected_records_for("other"), None);
+        sealed.dataset_slugs = vec!["orders".into(), "users".into()];
+        assert_eq!(sealed.expected_records_for("users"), None);
+        sealed.expected_records = 0;
+        assert_eq!(sealed.expected_records_for("users"), Some(0));
+    }
+
+    /// The invariant that makes #360 impossible to reintroduce, checked at
+    /// manifest validation rather than at catalog-publish time.
+    #[test]
+    fn validation_rejects_a_per_dataset_ledger_that_does_not_add_up() {
+        let mut fan_out = group("a", "a", path("61", false));
+        fan_out.dataset_slugs = vec!["orders".into(), "users".into()];
+        fan_out.expected_records = 4;
+        fan_out.expected_records_by_dataset =
+            BTreeMap::from([("orders".to_string(), 2), ("users".to_string(), 2)]);
+        validate_groups(std::slice::from_ref(&fan_out)).unwrap();
+
+        let mut whole_file_total = fan_out.clone();
+        whole_file_total.expected_records_by_dataset =
+            BTreeMap::from([("orders".to_string(), 4), ("users".to_string(), 4)]);
+        let error = validate_groups(&[whole_file_total]).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("disagrees with the group record total"),
+            "{error:#}"
+        );
+
+        let mut foreign_dataset = fan_out;
+        foreign_dataset.expected_records_by_dataset =
+            BTreeMap::from([("orders".to_string(), 2), ("invoices".to_string(), 2)]);
+        let error = validate_groups(&[foreign_dataset]).unwrap_err();
+        assert!(format!("{error:#}").contains("does not feed"), "{error:#}");
+    }
+
+    fn identity(inventory: &str) -> ExecutionIdentity {
+        ExecutionIdentity {
+            version: EXECUTION_IDENTITY_VERSION,
+            root_identity: "unix:root".into(),
+            url: "url".into(),
+            prefix: "prefix".into(),
+            follow_symlinks: false,
+            chunker_identity: "chunker-v1".into(),
+            embedding_identity_sha256: "a".repeat(64),
+            embedding_backend: "lexical".into(),
+            embedding_dimension: Some(384),
+            embedding_semantic_contract: "semantic_text-derived-vector.v1".into(),
+            embedding_resumable: true,
+            graph_enabled: false,
+            brain: "disabled".into(),
+            detector_identity: "disabled".into(),
+            schema_identity: "schema-v1".into(),
+            index_identity: "index-v1".into(),
+            source_policy: SourceExecutionPolicy::AbortOnSourceChange {
+                inventory_digest: inventory.into(),
+            },
+        }
+    }
+
+    #[test]
+    fn no_op_plan_or_bound_execution_change_is_refused() {
+        let mut legacy_plan = Plan::default();
+        legacy_plan.datasets.push(PlanDataset {
+            slug: "reports".into(),
+            index: "prefix-reports".into(),
+            family: "pdf".into(),
+            group: None,
+            specs: Vec::new(),
+            time_field: None,
+            semantic_field: None,
+            text_analyzer: None,
+            scope: None,
+            sampled_records: 0,
+            file_count: 0,
+        });
+        let legacy = CommittedManifest::genesis().unwrap();
+        let first = GenerationManifest {
+            generation: 1,
+            execution: Some(identity("inventory-a")),
+            plan: legacy_plan.clone(),
+            groups: Vec::new(),
+        };
+        let pending = PendingSync::new("bind".into(), &legacy, first.clone()).unwrap();
+
+        let committed =
+            CommittedManifest::from_generation(first.clone(), pending.desired_manifest_digest);
+        let mut changed_execution = first.clone();
+        changed_execution.generation = 2;
+        changed_execution.execution = Some(identity("inventory-b"));
+        assert!(
+            PendingSync::new("changed-execution".into(), &committed, changed_execution).is_err()
+        );
+        let mut changed_generated_flag = first.clone();
+        changed_generated_flag.generation = 2;
+        changed_generated_flag.plan.alias_paths_indexed =
+            !changed_generated_flag.plan.alias_paths_indexed;
+        assert!(PendingSync::new(
+            "changed-generated-flag".into(),
+            &committed,
+            changed_generated_flag
+        )
+        .is_err());
+
+        let mut changed_plan = first;
+        changed_plan.generation = 2;
+        changed_plan.plan.alias_paths_indexed = true;
+        assert!(PendingSync::new("changed-plan".into(), &committed, changed_plan).is_err());
+    }
+
+    #[test]
+    fn serialized_malicious_operation_list_is_rejected_against_manifests() {
+        let LegacyBootstrap::Ready(base) =
+            CommittedManifest::bootstrap_legacy(Plan::default()).unwrap()
+        else {
+            panic!("empty legacy plan is ready");
+        };
+        let desired = GenerationManifest {
+            generation: 1,
+            execution: Some(identity("inventory-a")),
+            plan: Plan::default(),
+            groups: Vec::new(),
+        };
+        let valid = PendingSync::new("tx".into(), &base, desired).unwrap();
+        let mut encoded = serde_json::to_value(valid).unwrap();
+        encoded["operations"] = serde_json::json!([{
+            "operation_id": "delete:invented",
+            "kind": "delete",
+            "group_id": "invented"
+        }]);
+        let malicious: PendingSync = serde_json::from_value(encoded).unwrap();
+        assert!(malicious.validate_against(&base).is_err());
+    }
+}

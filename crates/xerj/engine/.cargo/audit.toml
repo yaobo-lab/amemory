@@ -1,0 +1,22 @@
+# cargo-audit configuration (read by `cargo audit` run from engine/, as CI does).
+#
+# Policy: every RUSTSEC *vulnerability* fails CI unless it is listed here with
+# a justification that says why it cannot reach us AND what removes the entry.
+# Keep this list as short as possible; delete an entry as soon as it is fixable.
+
+[advisories]
+ignore = [
+    # webpki-roots 0.26.x — RUSTSEC-2026-0381 (bundled emSign ECC Root CA - G3
+    # lets paths through distrusted emSign intermediates; fixed in >= 1.0.10).
+    #
+    # Not affected: webpki-roots 0.26.11 is the upstream semver-trick shim that
+    # bundles no certificates of its own; it only re-exports webpki-roots 1.x.
+    # In Cargo.lock it depends solely on webpki-roots 1.0.10 (the fixed
+    # release), so the roots it hands out are the patched set. It is pulled in
+    # by ureq 2.12.1 via hf-hub. The advisory's version range just has no
+    # carve-out for the shim line.
+    #
+    # Remove this entry when hf-hub moves off ureq 2 (or a 0.26 shim release
+    # is marked patched in the advisory).
+    "RUSTSEC-2026-0381",
+]

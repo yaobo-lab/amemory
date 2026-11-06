@@ -1,0 +1,25 @@
+[package]
+name = "amemory-domain"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Pure domain models, validation, chunking, and document extraction for Amemory Skills, Books, and Memory"
+
+[dependencies]
+base64.workspace = true
+blake3.workspace = true
+calamine = { version = "=0.38.0", features = ["dates"] }
+chrono.workspace = true
+pdf_oxide = { version = "=0.3.75", default-features = false, features = ["legacy-crypto"] }
+quick-xml = "0.41"
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+zip = { version = "9", default-features = false, features = ["deflate"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

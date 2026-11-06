@@ -1,0 +1,257 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/xerj-server",
+    "crates/xerj-common",
+    "crates/xerj-storage",
+    "crates/xerj-fts",
+    "crates/xerj-vector",
+    "crates/xerj-logs",
+    "crates/xerj-query",
+    "crates/xerj-rerank",
+    "crates/xerj-api",
+    "crates/xerj-ai",
+    "crates/xerj-compress",
+    "crates/xerj-engine",
+    "crates/xerj-mcp",
+    "crates/xerj-wasm",
+    "crates/xerj-cluster",
+    "crates/xerj-console-api",
+    "crates/xerj-autoindex",
+    "crates/xerj-hub",
+    "tests/es-compat-yaml",
+]
+
+[workspace.package]
+version = "1.0.0-rc.101"
+edition = "2021"
+license = "Apache-2.0"
+authors = ["xerj Contributors"]
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+# HTTP
+axum = { version = "0.7", features = ["macros"] }
+# `h2` is the HTTP/2 implementation under every listener (hyper for REST +
+# ES-compat, tonic for gRPC) and under `reqwest` on the client side. Nothing in
+# this workspace calls it directly outside the `xerj-server` regression test,
+# but the floor is declared here on purpose: 0.4.16-0.4.18 size the small-DATA-
+# frame budget (the RUSTSEC-2026-0258 mitigation) at a fixed 25,600 bytes,
+# which a legitimate authenticated request chunked below ~200 bytes exhausts —
+# the client is answered `GOAWAY ENHANCE_YOUR_CALM` (#485). 0.4.19 scales the
+# budget with the configured connection window instead (half of it, floor
+# 25,600), so hyper's 1 MiB server window yields 512 KiB of headroom while the
+# empty-DATA-frame vector the advisory was filed for stays capped at 100 frames
+# by a separate counter. Declaring the floor here means `cargo update` cannot
+# resolve back to a version with the fixed budget.
+h2 = "0.4.19"
+tower = "0.4"
+tower-http = { version = "0.5", features = ["cors", "trace", "limit", "decompression-gzip"] }
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["raw_value"] }
+simd-json = "0.14"
+# SIMD-accelerated byte search
+memchr = "2"
+# Config
+toml = "0.8"
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+# Parallel compute
+rayon = "1.10"
+# Concurrent data structures
+dashmap = "6"
+arc-swap = "1"
+crossbeam = "0.8"
+# Data structures
+roaring = "0.10"
+fst = "0.4"
+bitpacking = "0.9"
+# Compression
+lz4_flex = "0.11"
+zstd = "0.14.3"
+# Hashing
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
+rustc-hash = "2"
+crc32fast = "1"
+# Crypto/Random
+rand = "0.8"
+# ed25519 pack signatures (harvest/sign.rs); same crate the TLS stack uses,
+# so it adds no new native build to the binary.
+ring = "0.17"
+# Bytes
+bytes = "1"
+memmap2 = "0.9"
+byteorder = "1"
+# Error handling
+thiserror = "2"
+anyhow = "1"
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+# UUID
+uuid = { version = "1", features = ["v4", "serde"] }
+# S3 / S3-compatible object storage (Cloudflare R2, MinIO, AWS S3, ...).
+#
+# `default-features = false` is load-bearing, not tidiness. The default
+# feature set routes through `aws-smithy-runtime/default-https-client`, which
+# selects `aws-smithy-http-client/rustls-aws-lc` — i.e. aws-lc-rs, a C/asm
+# build. That is precisely the crypto backend the `tonic` line below
+# deliberately keeps out of this tree because it breaks the musl/aarch64/
+# windows cross-compile matrix. We instead pick the TLS stack explicitly via
+# `aws-smithy-http-client` with `rustls-ring`, which reuses the rustls+ring
+# already pulled in by `reqwest`/axum-server: hyper 1.x, no new C toolchain
+# requirement, no second TLS implementation in the binary.
+#
+# `sigv4a` is also dropped from the default set: it only signs requests to
+# S3 multi-region access points, which XERJ does not address. Plain SigV4 is
+# what R2, MinIO and single-region S3 buckets accept.
+aws-sdk-s3 = { version = "1", default-features = false, features = [
+    "rt-tokio",
+    "http-1x",
+    "behavior-version-latest",
+] }
+# The HTTP client is supplied explicitly (see above). `rustls-ring` implies
+# `__rustls` + `default-client` => hyper 1.x + hyper-rustls + tokio-rustls on
+# the ring provider.
+aws-smithy-http-client = { version = "1", default-features = false, features = [
+    "rustls-ring",
+] }
+# TLS
+rustls = "0.23"
+rcgen = "0.13"
+# Metrics. `default-features = false` drops the optional `protobuf` feature,
+# which is the ONLY thing that pulled protobuf 2.28.0 into the tree
+# (GHSA-2gh3-rmm4-6rq5, uncontrolled recursion when PARSING protobuf). We only
+# ever ENCODE, and only to the text exposition format: `TextEncoder`, `Encoder`
+# and `proto::MetricFamily` are all available without the feature (`proto` is
+# then backed by prometheus's pure-Rust `src/plain_model.rs`). Only
+# `ProtobufEncoder`/`PROTOBUF_FORMAT` are gated off, and nothing here uses them.
+# Removing the dependency beats upgrading it — there is no protobuf parser left
+# to be recursed into. Same reasoning as the `tonic` line below.
+prometheus = { version = "0.13", default-features = false }
+# gRPC (XerjSearch service on :8081). Default features only — the `tls`
+# feature is intentionally OFF so tonic pulls no crypto backend (no
+# aws-lc-rs / vendored OpenSSL); the gRPC listener speaks plaintext h2c,
+# while the REST/ES listeners keep terminating TLS via axum-server+ring.
+tonic = { version = "0.12", default-features = false, features = ["channel", "codegen", "prost", "router", "server"] }
+prost = "0.13"
+# Build-time codegen. `protox` is a PURE-RUST protobuf compiler, so the
+# build needs NO `protoc` binary on the host — critical for the
+# cross-compile matrix (musl/aarch64/windows/macos) where a host protoc
+# is not guaranteed. It emits a FileDescriptorSet that tonic-build turns
+# into Rust via `compile_fds` (never shelling out to protoc).
+tonic-build = { version = "0.12", default-features = false, features = ["prost", "transport"] }
+protox = "0.7"
+# HTTP client (embedding proxy, hub, feedback). `rustls-tls-native-roots`
+# adds the OS certificate store on top of the bundled Mozilla roots, so
+# machines behind a TLS-inspecting proxy or antivirus (whose CA lives only
+# in the OS store) can still reach hub.xerj.org instead of failing with
+# rustls `UnknownIssuer` (#2746). Both root sets are loaded additively.
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "rustls-tls-native-roots", "http2", "charset"] }
+# Testing
+tempfile = "3"
+# Benchmarking
+criterion = { version = "0.5", features = ["html_reports"] }
+# AST parsing. Only tree-sitter CORE is hoisted here: it declares
+# `links = "tree-sitter"`, so two crates pinning different core versions is a
+# hard resolution failure that takes out the whole workspace at once, not a
+# duplicate-dep warning (#352: #327 pinned 0.25, #317 moved to 0.26, and the
+# merge stopped resolving). One pin, one version. Per-crate grammar pins stay
+# local; the `workspace-resolves` CI gate catches any links crate that drifts.
+tree-sitter = "0.26"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = true
+panic = "abort"
+
+# CI test profile. Identical *code semantics* to [profile.release] --
+# opt-level 3, debug-assertions off, overflow-checks off -- so tests still
+# exercise optimized codegen. Only the optimization *scope* changes: no
+# whole-program LTO and 16 codegen units instead of 1.
+#
+# Why it exists: `cargo test --release` links every one of the ~99 test
+# binaries with fat LTO + codegen-units=1. On CI run 31571998506 that was
+# 76m05s of compilation for 1m52s of actual test execution. `panic = "abort"`
+# additionally forces cargo to rebuild the entire dependency graph with
+# `panic = "unwind"` for test targets, so a preceding `cargo build --release`
+# shares almost nothing with it; `panic = "unwind"` here makes that split
+# explicit rather than accidental.
+#
+# [profile.release] above is deliberately untouched: release.yml builds the
+# shipped binary with `cargo build --release`, and it must stay fat-LTO.
+[profile.ci-test]
+inherits = "release"
+lto = false
+codegen-units = 16
+panic = "unwind"
+strip = false
+
+# Fast iteration profile: symbolized with thin LTO and parallel codegen.
+# It is intentionally not production-codegen-equivalent.
+# Fast verification profile — the BUILD half of the implement -> build -> verify
+# loop. Its sibling is [profile.ci-test] above, which serves the TEST half.
+#
+# The division is deliberate and the two are not redundant:
+#   quick    — `cargo build`. Inherits panic = "abort" from release, matching the
+#              shipped binary, so the artifact you smoke-test behaves like the real
+#              one (panic strategy is observable).
+#   ci-test  — `cargo test`. Uses panic = "unwind", because cargo rebuilds the whole
+#              dependency graph with unwind for test targets regardless; declaring it
+#              makes that split explicit instead of accidental, and lets test builds
+#              share artifacts with each other rather than fighting a build profile
+#              they can never reuse.
+#
+# Use ci-test for `cargo test`. Use quick for `cargo build`. Neither is ever valid
+# for a released artifact or a published number.
+#
+# WHY: [profile.release] below is a SHIPPING configuration — `lto = "fat"` plus
+# `codegen-units = 1` is the slowest build Rust can produce, deliberately, because
+# it yields the fastest binary. Fat LTO is a whole-program optimisation that runs
+# largely single-threaded at link time, and codegen-units = 1 removes intra-crate
+# parallelism, so a 32-core machine ends up watching one core. That is the right
+# trade for an artifact users download and run for months. It is the wrong trade
+# for an agent rebuilding to check whether a one-line fix compiles: the same cost
+# is paid on every iteration, and the resulting binary's runtime speed is
+# irrelevant to the question being asked.
+#
+# `quick` keeps everything that affects CORRECTNESS identical to release —
+# panic = "abort" (inherited, and it changes observable behaviour, so it must
+# match), the same feature set, the same target-cpu from .cargo/config.toml — and
+# relaxes only what affects optimisation. A binary built with `quick` is a valid
+# functional test of a release binary; it is NOT valid for measuring performance.
+#
+# USE IT FOR: does it compile, do the tests pass, does the ES-YAML suite stay at
+#             0 failed, does this fix actually fix the bug.
+# NEVER USE IT FOR: benchmarks, latency numbers, published measurements, or any
+#             artifact that leaves this machine. Those must be --release.
+#
+#   cargo build --profile quick -p xerj-server
+#   cargo test  --profile quick -p xerj-autoindex
+#
+[profile.quick]
+inherits = "release"
+lto = false          # the single biggest lever: no whole-program link-time pass
+codegen-units = 16   # let 32 cores actually participate
+opt-level = 2        # enough that tests are not pathologically slow
+debug = false        # debuginfo is a large share of both build time and disk
+strip = true
+incremental = true   # meaningful for the edit-rebuild-edit loop this profile serves
+
+[profile.profiling]
+inherits = "release"
+debug = 1
+strip = false
+lto = "thin"
+codegen-units = 16
+
+# Final confirmation profile: identical optimizer/LTO/codegen settings to
+# release, but retains symbols for pprof.
+[profile.profiling-final]
+inherits = "release"
+debug = 1
+strip = false

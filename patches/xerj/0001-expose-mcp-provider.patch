@@ -1,0 +1,70 @@
+diff --git a/engine/crates/xerj-mcp/src/lib.rs b/engine/crates/xerj-mcp/src/lib.rs
+index ea24e52..ae86259 100644
+--- a/engine/crates/xerj-mcp/src/lib.rs
++++ b/engine/crates/xerj-mcp/src/lib.rs
+@@ -673,6 +673,65 @@ pub async fn handle_message_for_test(
+     handle_message(&ctx, msg).await
+ }
+ 
++/// Protocol-agnostic provider for XERJ MCP tools.
++///
++/// Allows host applications (such as a unified MCP facade) to enumerate
++/// XERJ's tool specifications and dispatch `tools/call` executions without
++/// starting a second stdio JSON-RPC loop.
++#[derive(Clone)]
++pub struct McpProvider {
++    ctx: std::sync::Arc<Ctx>,
++}
++
++impl McpProvider {
++    /// Construct a provider targeting `base_url` with an optional `Authorization` header.
++    ///
++    /// When `auth` is `None`, follows the same environment and loopback `admin.key`
++    /// resolution rules as [`run`].
++    pub fn new(base_url: impl Into<String>, auth: Option<String>) -> anyhow::Result<Self> {
++        let trimmed = base_url.into().trim_end_matches('/').to_string();
++        let base_url = if trimmed.is_empty() {
++            DEFAULT_XERJ_URL.to_string()
++        } else {
++            trimmed
++        };
++        let (resolved_auth, _) = resolve_auth(auth, std::env::var("XERJ_AUTH").ok(), &base_url);
++        let client = node_http_builder(&base_url)
++            .timeout(REQUEST_TIMEOUT)
++            .build()?;
++        Ok(Self {
++            ctx: std::sync::Arc::new(Ctx {
++                client,
++                base_url,
++                auth: resolved_auth,
++            }),
++        })
++    }
++
++    /// Return the base URL this provider proxies requests to.
++    pub fn base_url(&self) -> &str {
++        &self.ctx.base_url
++    }
++
++    /// Return the MCP tool specifications served by this process.
++    pub fn tool_specs(&self) -> Value {
++        tool_specs()
++    }
++
++    /// Execute a single XERJ MCP tool by name with JSON arguments.
++    ///
++    /// Returns the MCP `CallToolResult` JSON object (`{"content": [...], "isError": bool}`).
++    pub async fn call_tool(&self, name: &str, arguments: Value) -> Value {
++        let msg = json!({
++            "params": {
++                "name": name,
++                "arguments": arguments,
++            }
++        });
++        call_tool(&self.ctx, &msg).await
++    }
++}
++
+ /// Build the `initialize` result, echoing the client's requested protocol
+ /// version when present (our JSON-RPC handling is version-agnostic).
+ fn initialize_result(msg: &Value) -> Value {

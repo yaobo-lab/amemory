@@ -1,32 +1,14 @@
-//! 通过标准输入输出或 Streamable HTTP 运行 Memvid 模型上下文协议服务器。
+//! Binary entry point (`amemory`) acting as the pure composition root.
 
-#![expect(
-    unused_crate_dependencies,
-    reason = "the binary delegates application modules and their dependencies to the library crate"
-)]
-
-use toolkit_rs::{
-    logger,
-    painc::{PaincConf, set_panic_handler},
-};
-use xflash_mcp::{app, config};
+use amemory::{AppConfig, run};
+use eyre::{Result, eyre};
+use toolkit_rs::{logger, painc::set_panic_handler};
 
 #[tokio::main]
-async fn main() -> eyre::Result<()> {
+async fn main() -> Result<()> {
     color_eyre::install()?;
-    let config = config::load()?;
-    set_panic_handler(PaincConf {
-        version: env!("CARGO_PKG_VERSION").into(),
-        build_time: option_env!("BUILD_TIME").unwrap_or("unknown").into(),
-        painc_exit: config.panic.exit,
-    });
-    logger::setup(config.logger.clone())
-        .map_err(|error| eyre::eyre!("failed to initialize logger: {error:#}"))?;
-    log::info!(
-        "server starting: crate={}, version={}, config={}",
-        env!("CARGO_CRATE_NAME"),
-        env!("CARGO_PKG_VERSION"),
-        config::CONFIG_PATH
-    );
-    app::run(config).await
+    let config = AppConfig::load(None)?;
+    set_panic_handler(config.to_toolkit_panic_conf());
+    logger::setup(config.to_toolkit_log_config()).map_err(|e| eyre!("初始化日志组件失败: {e}"))?;
+    run(config).await
 }

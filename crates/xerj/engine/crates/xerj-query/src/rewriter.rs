@@ -1,0 +1,838 @@
+//! Query rewriter / optimizer.
+//!
+//! Performs up to `MAX_PASSES` rewrites of the query tree, stopping early when
+//! a pass produces no changes (convergence).  This is the same strategy ES
+//! uses internally (also 16 passes), but here it is a plain recursive
+//! function rather than a visitor hierarchy.
+//!
+//! ## Rewrites applied (in order each pass)
+//!
+//! 1. **Bool flattening** — `Bool(must=[Bool(must=[A,B])])` → `Bool(must=[A,B])`
+//! 2. **MatchAll removal from `must`** — `Bool(must=[MatchAll, X])` → `Bool(must=[X])`
+//! 3. **MatchNone removal from `should`** — `Bool(should=[MatchNone, X])` → `Bool(should=[X])`
+//! 4. **Constant folding**:
+//!    - `Bool(must=[MatchNone, …])` → `MatchNone`
+//!    - `Bool(must=[X])` with empty should/must_not/filter → unwrap to `X`
+//!    - `Constant(score, MatchAll)` stays as-is (already minimal)
+//! 5. **Duplicate removal** in bool clause lists.
+//! 6. **Filter push-down** — scoring-free clauses in `must` that are also
+//!    present in `filter` are removed from `must`.
+//! 7. **Single-clause bool unwrapping** — `Bool(must=[X])` → `X` when no
+//!    other clauses exist and no `minimum_should_match`.
+
+use tracing::trace;
+
+use crate::ast::{BoolOperator, MultiMatchType, QueryNode, SearchRequest};
+
+/// Fill in `match` / `multi_match` operators the request left out (#1504).
+///
+/// A log dataset's index sets `index.query.default_match_operator` to `and`.
+/// The engine calls this with [`BoolOperator::And`] before hashing the query
+/// cache key, so an omitted operator requires every token and an explicit
+/// `"operator": "or"` does not change. Indices without the setting never call
+/// this: [`BoolOperator::Omitted`] is executed as OR, which is the ES default.
+///
+/// `minimum_should_match` without an operator is the OR form of that count
+/// (ES), so those clauses are left omitted. Phrase `multi_match` ignores
+/// `operator`; leaving it absent keeps that arm on the positional path.
+/// `query_string` is lowered at parse time with its own `default_operator`
+/// already applied, so this does not reach it.
+pub fn apply_default_match_operator(request: &mut SearchRequest, operator: BoolOperator) {
+    walk_match_operator(&mut request.query, operator);
+    for window in &mut request.rescore {
+        if let Some(inner) = window.query.as_mut() {
+            walk_match_operator(&mut inner.rescore_query, operator);
+        }
+    }
+}
+
+fn walk_match_operator(q: &mut QueryNode, operator: BoolOperator) {
+    match q {
+        QueryNode::Match {
+            operator: op,
+            minimum_should_match,
+            ..
+        } => {
+            if *op == BoolOperator::Omitted && minimum_should_match.is_none() {
+                *op = operator;
+            }
+        }
+        QueryNode::MultiMatch {
+            operator: op,
+            match_type,
+            ..
+        } => {
+            if op.is_none()
+                && !matches!(
+                    match_type,
+                    MultiMatchType::Phrase | MultiMatchType::PhrasePrefix
+                )
+            {
+                *op = Some(operator);
+            }
+        }
+        QueryNode::Bool {
+            must,
+            should,
+            must_not,
+            filter,
+            ..
+        } => {
+            for child in must
+                .iter_mut()
+                .chain(should.iter_mut())
+                .chain(must_not.iter_mut())
+                .chain(filter.iter_mut())
+            {
+                walk_match_operator(child, operator);
+            }
+        }
+        QueryNode::Constant { query, .. }
+        | QueryNode::Boosted { query, .. }
+        | QueryNode::Named { query, .. }
+        | QueryNode::FunctionScore { query, .. }
+        | QueryNode::Nested { query, .. } => walk_match_operator(query, operator),
+        QueryNode::Boosting {
+            positive, negative, ..
+        } => {
+            walk_match_operator(positive, operator);
+            walk_match_operator(negative, operator);
+        }
+        QueryNode::DisMax { queries, .. } => {
+            for child in queries {
+                walk_match_operator(child, operator);
+            }
+        }
+        QueryNode::Pinned { organic, .. } => walk_match_operator(organic, operator),
+        QueryNode::Knn { filter, .. } | QueryNode::SemanticSearch { filter, .. } => {
+            if let Some(filter) = filter {
+                walk_match_operator(filter, operator);
+            }
+        }
+        QueryNode::Hybrid { queries, .. } => {
+            for weighted in queries {
+                walk_match_operator(&mut weighted.query, operator);
+            }
+        }
+        QueryNode::SpanNear { clauses, .. } | QueryNode::SpanOr { clauses } => {
+            for child in clauses {
+                walk_match_operator(child, operator);
+            }
+        }
+        QueryNode::SpanNot { include, exclude } => {
+            walk_match_operator(include, operator);
+            walk_match_operator(exclude, operator);
+        }
+        QueryNode::SpanFirst { match_query, .. } => walk_match_operator(match_query, operator),
+        QueryNode::SpanContaining { little, big } | QueryNode::SpanWithin { little, big } => {
+            walk_match_operator(little, operator);
+            walk_match_operator(big, operator);
+        }
+        QueryNode::MatchAll
+        | QueryNode::MatchNone
+        | QueryNode::Term { .. }
+        | QueryNode::Terms { .. }
+        | QueryNode::Range { .. }
+        | QueryNode::Prefix { .. }
+        | QueryNode::Wildcard { .. }
+        | QueryNode::Exists { .. }
+        | QueryNode::Ids { .. }
+        | QueryNode::Script { .. }
+        | QueryNode::MatchPhrase { .. }
+        | QueryNode::QueryString { .. }
+        | QueryNode::Fuzzy { .. }
+        | QueryNode::Regexp { .. }
+        | QueryNode::Intervals { .. }
+        | QueryNode::MatchPhrasePrefix { .. }
+        | QueryNode::SimpleQueryString { .. }
+        | QueryNode::GeoDistance { .. }
+        | QueryNode::GeoBoundingBox { .. }
+        | QueryNode::GeoPolygon { .. }
+        | QueryNode::GeoShape { .. }
+        | QueryNode::SpanTerm { .. }
+        | QueryNode::MoreLikeThis { .. }
+        | QueryNode::Percolate { .. } => {}
+    }
+}
+
+/// Maximum number of rewrite passes before we give up trying to converge.
+const MAX_PASSES: usize = 16;
+
+/// Rewrite a query tree to its canonical, optimal form.
+///
+/// The returned query is semantically equivalent to the input but may be
+/// structurally simpler, which leads to faster execution.
+pub fn rewrite(query: QueryNode) -> QueryNode {
+    let mut current = query;
+    for pass in 1..=MAX_PASSES {
+        let (next, changed) = rewrite_once(current);
+        current = next;
+        if !changed {
+            trace!(pass, "query rewriter converged");
+            break;
+        }
+        trace!(pass, "query rewriter pass made changes");
+    }
+    current
+}
+
+/// Single rewrite pass.  Returns `(rewritten_query, did_change)`.
+fn rewrite_once(query: QueryNode) -> (QueryNode, bool) {
+    match query {
+        QueryNode::Bool {
+            mut must,
+            mut should,
+            mut must_not,
+            mut filter,
+            minimum_should_match,
+        } => {
+            // ── Recurse into children first ──
+            let (must2, c1) = rewrite_list(must);
+            let (should2, c2) = rewrite_list(should);
+            let (must_not2, c3) = rewrite_list(must_not);
+            let (filter2, c4) = rewrite_list(filter);
+            must = must2;
+            should = should2;
+            must_not = must_not2;
+            filter = filter2;
+            let mut changed = c1 || c2 || c3 || c4;
+
+            // ── Short-circuit: any MatchNone in must → whole bool is MatchNone ──
+            if must.iter().any(QueryNode::is_match_none) {
+                return (QueryNode::MatchNone, true);
+            }
+
+            // ── Short-circuit: any MatchNone in filter → MatchNone ──
+            if filter.iter().any(QueryNode::is_match_none) {
+                return (QueryNode::MatchNone, true);
+            }
+
+            // ── Remove MatchAll from must (doesn't restrict anything) ──
+            let before = must.len();
+            must.retain(|q| !q.is_match_all());
+            if must.len() != before {
+                changed = true;
+            }
+
+            // ── Remove MatchAll from filter ──
+            let before = filter.len();
+            filter.retain(|q| !q.is_match_all());
+            if filter.len() != before {
+                changed = true;
+            }
+
+            // ── Remove MatchNone from should ──
+            let before = should.len();
+            should.retain(|q| !q.is_match_none());
+            if should.len() != before {
+                changed = true;
+            }
+
+            // ── Flatten nested Bool::must into parent must ──
+            let before = must.len();
+            must = flatten_must(must);
+            if must.len() != before {
+                changed = true;
+            }
+
+            // ── Flatten nested Bool::filter into parent filter ──
+            let before = filter.len();
+            filter = flatten_filter(filter);
+            if filter.len() != before {
+                changed = true;
+            }
+
+            // ── Deduplicate ──
+            let (must3, dc1) = dedup(must);
+            let (should3, dc2) = dedup(should);
+            let (filter3, dc3) = dedup(filter);
+            must = must3;
+            should = should3;
+            filter = filter3;
+            if dc1 || dc2 || dc3 {
+                changed = true;
+            }
+
+            // ── Push duplicate must clauses down to filter ──
+            // If a clause appears in both `must` and `filter`, keep it only
+            // in `filter` (scoring is already provided by other must clauses).
+            let (must4, filter4, pushed) = push_to_filter(must, filter);
+            must = must4;
+            filter = filter4;
+            if pushed {
+                changed = true;
+            }
+
+            // ── Empty should with no minimum_should_match ──
+            // nothing to do; empty should just means "all docs matching must".
+
+            // ── Constant folding: unwrap trivial bools ──
+            if must.is_empty() && should.is_empty() && must_not.is_empty() && filter.is_empty() {
+                return (QueryNode::MatchAll, true);
+            }
+
+            // Unwrap Bool(must=[X]) → X (when no other clauses and no msm)
+            if must.len() == 1
+                && should.is_empty()
+                && must_not.is_empty()
+                && filter.is_empty()
+                && minimum_should_match.is_none()
+            {
+                return (must.remove(0), true);
+            }
+
+            // Unwrap Bool(filter=[X]) → Constant(0, X)
+            // (pure filter — no scoring needed)
+            if must.is_empty()
+                && should.is_empty()
+                && must_not.is_empty()
+                && filter.len() == 1
+                && minimum_should_match.is_none()
+            {
+                let inner = filter.remove(0);
+                return (
+                    QueryNode::Constant {
+                        score: 0.0,
+                        query: Box::new(inner),
+                    },
+                    true,
+                );
+            }
+
+            (
+                QueryNode::Bool {
+                    must,
+                    should,
+                    must_not,
+                    filter,
+                    minimum_should_match,
+                },
+                changed,
+            )
+        }
+
+        // ── Constant / Boosted — recurse into child ──
+        QueryNode::Constant { score, query } => {
+            let (q2, changed) = rewrite_once(*query);
+            (
+                QueryNode::Constant {
+                    score,
+                    query: Box::new(q2),
+                },
+                changed,
+            )
+        }
+        QueryNode::Boosted { boost, query } => {
+            let (q2, changed) = rewrite_once(*query);
+            if q2.is_match_none() {
+                return (QueryNode::MatchNone, true);
+            }
+            (
+                QueryNode::Boosted {
+                    boost,
+                    query: Box::new(q2),
+                },
+                changed,
+            )
+        }
+
+        // ── Vector queries — recurse into filter ──
+        QueryNode::Knn {
+            field,
+            vector,
+            k,
+            num_candidates,
+            filter,
+            boost,
+            similarity,
+        } => match filter {
+            None => (
+                QueryNode::Knn {
+                    field,
+                    vector,
+                    k,
+                    num_candidates,
+                    filter: None,
+                    boost,
+                    similarity,
+                },
+                false,
+            ),
+            Some(f) => {
+                let (f2, changed) = rewrite_once(*f);
+                (
+                    QueryNode::Knn {
+                        field,
+                        vector,
+                        k,
+                        num_candidates,
+                        filter: Some(Box::new(f2)),
+                        boost,
+                        similarity,
+                    },
+                    changed,
+                )
+            }
+        },
+        QueryNode::SemanticSearch {
+            field,
+            text,
+            k,
+            filter,
+            boost,
+        } => match filter {
+            None => (
+                QueryNode::SemanticSearch {
+                    field,
+                    text,
+                    k,
+                    filter: None,
+                    boost,
+                },
+                false,
+            ),
+            Some(f) => {
+                let (f2, changed) = rewrite_once(*f);
+                (
+                    QueryNode::SemanticSearch {
+                        field,
+                        text,
+                        k,
+                        filter: Some(Box::new(f2)),
+                        boost,
+                    },
+                    changed,
+                )
+            }
+        },
+
+        // ── Hybrid — recurse into each sub-query ──
+        QueryNode::Hybrid { queries, fusion } => {
+            let mut changed = false;
+            let queries2 = queries
+                .into_iter()
+                .map(|wq| {
+                    let (q2, c) = rewrite_once(wq.query);
+                    changed |= c;
+                    crate::ast::WeightedQuery {
+                        query: q2,
+                        weight: wq.weight,
+                    }
+                })
+                .collect();
+            (
+                QueryNode::Hybrid {
+                    queries: queries2,
+                    fusion,
+                },
+                changed,
+            )
+        }
+
+        // ── Leaf nodes — nothing to rewrite ──
+        other => (other, false),
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn rewrite_list(queries: Vec<QueryNode>) -> (Vec<QueryNode>, bool) {
+    let mut changed = false;
+    let out = queries
+        .into_iter()
+        .map(|q| {
+            let (q2, c) = rewrite_once(q);
+            changed |= c;
+            q2
+        })
+        .collect();
+    (out, changed)
+}
+
+/// Flatten `Bool(must=[Bool(must=[A,B]), C])` → `[A, B, C]`.
+/// Only safe when the nested Bool has no should / must_not / filter clauses
+/// and no `minimum_should_match`.
+fn flatten_must(clauses: Vec<QueryNode>) -> Vec<QueryNode> {
+    let mut out = Vec::with_capacity(clauses.len());
+    for q in clauses {
+        match q {
+            QueryNode::Bool {
+                must: inner_must,
+                should,
+                must_not,
+                filter,
+                minimum_should_match: None,
+            } if should.is_empty() && must_not.is_empty() && filter.is_empty() => {
+                out.extend(inner_must);
+            }
+            other => out.push(other),
+        }
+    }
+    out
+}
+
+/// Flatten `Bool(filter=[Bool(filter=[A,B]), C])` → `[A, B, C]`.
+fn flatten_filter(clauses: Vec<QueryNode>) -> Vec<QueryNode> {
+    let mut out = Vec::with_capacity(clauses.len());
+    for q in clauses {
+        match q {
+            QueryNode::Bool {
+                must,
+                should,
+                must_not,
+                filter: inner_filter,
+                minimum_should_match: None,
+            } if must.is_empty() && should.is_empty() && must_not.is_empty() => {
+                out.extend(inner_filter);
+            }
+            other => out.push(other),
+        }
+    }
+    out
+}
+
+/// Remove structurally duplicate query nodes from a clause list.
+///
+/// Equality is structural (via `PartialEq`), which is correct for term /
+/// range / phrase queries.  Match queries may differ only in analyser and
+/// still produce identical token sets — we do not deduplicate those (doing so
+/// would require invoking the analyser at plan time).
+fn dedup(mut clauses: Vec<QueryNode>) -> (Vec<QueryNode>, bool) {
+    let before = clauses.len();
+    let mut i = 0;
+    while i < clauses.len() {
+        let mut j = i + 1;
+        while j < clauses.len() {
+            if clauses[i] == clauses[j] {
+                clauses.remove(j);
+            } else {
+                j += 1;
+            }
+        }
+        i += 1;
+    }
+    let changed = clauses.len() != before;
+    (clauses, changed)
+}
+
+/// If a clause exists in both `must` and `filter`, remove it from `must`.
+/// The filter clause already enforces the restriction; the must clause's
+/// only remaining purpose would be scoring, but if it matches exactly the
+/// filter it contributes nothing distinctive.
+fn push_to_filter(
+    must: Vec<QueryNode>,
+    filter: Vec<QueryNode>,
+) -> (Vec<QueryNode>, Vec<QueryNode>, bool) {
+    if filter.is_empty() {
+        return (must, filter, false);
+    }
+    let mut changed = false;
+    let must_out: Vec<QueryNode> = must
+        .into_iter()
+        .filter(|q| {
+            if filter.contains(q) {
+                changed = true;
+                false
+            } else {
+                true
+            }
+        })
+        .collect();
+    (must_out, filter, changed)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tests
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ast::{MinShouldMatch, QueryNode, SearchRequest};
+
+    fn term(field: &str, value: &str) -> QueryNode {
+        QueryNode::Term {
+            field: field.to_string(),
+            value: serde_json::json!(value),
+            boost: None,
+        }
+    }
+
+    fn bool_must(clauses: Vec<QueryNode>) -> QueryNode {
+        QueryNode::Bool {
+            must: clauses,
+            should: vec![],
+            must_not: vec![],
+            filter: vec![],
+            minimum_should_match: None,
+        }
+    }
+
+    fn bool_filter(clauses: Vec<QueryNode>) -> QueryNode {
+        QueryNode::Bool {
+            must: vec![],
+            should: vec![],
+            must_not: vec![],
+            filter: clauses,
+            minimum_should_match: None,
+        }
+    }
+
+    // ── match_all elimination ─────────────────────────────────────────────────
+
+    #[test]
+    fn test_remove_match_all_from_must() {
+        let q = bool_must(vec![QueryNode::MatchAll, term("status", "active")]);
+        let result = rewrite(q);
+        assert_eq!(result, term("status", "active"));
+    }
+
+    #[test]
+    fn test_match_all_alone_stays() {
+        let q = QueryNode::MatchAll;
+        let result = rewrite(q);
+        assert_eq!(result, QueryNode::MatchAll);
+    }
+
+    // ── match_none propagation ────────────────────────────────────────────────
+
+    #[test]
+    fn test_match_none_in_must_folds_to_match_none() {
+        let q = bool_must(vec![QueryNode::MatchNone, term("x", "y")]);
+        assert_eq!(rewrite(q), QueryNode::MatchNone);
+    }
+
+    #[test]
+    fn test_match_none_removed_from_should() {
+        let q = QueryNode::Bool {
+            must: vec![],
+            should: vec![QueryNode::MatchNone, term("tag", "rust")],
+            must_not: vec![],
+            filter: vec![],
+            minimum_should_match: None,
+        };
+        // After removing MatchNone from should, we have Bool(should=[term])
+        // which then gets unwrapped? No — should single-clause is not unwrapped
+        // (would change semantics — should doesn't require a match by default).
+        let result = rewrite(q);
+        if let QueryNode::Bool { should, .. } = &result {
+            assert_eq!(should.len(), 1);
+            assert_eq!(should[0], term("tag", "rust"));
+        } else {
+            panic!("expected Bool, got {result:?}");
+        }
+    }
+
+    // ── bool flattening ───────────────────────────────────────────────────────
+
+    #[test]
+    fn test_flatten_nested_must() {
+        // Bool(must=[Bool(must=[A, B])]) → Bool(must=[A, B]) → single clause unwrap → A if len=1
+        let a = term("a", "1");
+        let b = term("b", "2");
+        let inner = bool_must(vec![a.clone(), b.clone()]);
+        let outer = bool_must(vec![inner]);
+        let result = rewrite(outer);
+        // After flattening: Bool(must=[A, B])
+        if let QueryNode::Bool { must, .. } = &result {
+            assert_eq!(must.len(), 2);
+        } else {
+            panic!("expected Bool, got {result:?}");
+        }
+    }
+
+    #[test]
+    fn test_single_must_unwrapped() {
+        let q = bool_must(vec![term("status", "ok")]);
+        assert_eq!(rewrite(q), term("status", "ok"));
+    }
+
+    // ── deduplication ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_dedup_must_clauses() {
+        let t = term("status", "active");
+        let q = bool_must(vec![t.clone(), t.clone(), term("x", "y")]);
+        let result = rewrite(q);
+        if let QueryNode::Bool { must, .. } = result {
+            assert_eq!(must.len(), 2);
+        } else {
+            // Could also be unwrapped if only one unique clause remained
+            // but here we have two distinct clauses
+            panic!("expected Bool");
+        }
+    }
+
+    // ── filter push-down ──────────────────────────────────────────────────────
+
+    #[test]
+    fn test_push_must_to_filter() {
+        let t = term("status", "active");
+        let q = QueryNode::Bool {
+            must: vec![t.clone(), term("title", "rust")],
+            should: vec![],
+            must_not: vec![],
+            filter: vec![t.clone()], // same as first must clause
+            minimum_should_match: None,
+        };
+        let result = rewrite(q);
+        if let QueryNode::Bool { must, filter, .. } = result {
+            // "status=active" should be in filter only
+            assert!(!must.contains(&t));
+            assert!(filter.contains(&t));
+        } else {
+            panic!("expected Bool");
+        }
+    }
+
+    // ── filter-only bool → Constant(0.0, inner) ──────────────────────────────
+
+    #[test]
+    fn test_filter_only_becomes_constant() {
+        let q = bool_filter(vec![term("status", "active")]);
+        let result = rewrite(q);
+        assert!(
+            matches!(result, QueryNode::Constant { score, .. } if score == 0.0),
+            "expected Constant(0.0, …), got {result:?}"
+        );
+    }
+
+    // ── empty bool → match_all ────────────────────────────────────────────────
+
+    #[test]
+    fn test_empty_bool_becomes_match_all() {
+        let q = QueryNode::Bool {
+            must: vec![],
+            should: vec![],
+            must_not: vec![],
+            filter: vec![],
+            minimum_should_match: None,
+        };
+        assert_eq!(rewrite(q), QueryNode::MatchAll);
+    }
+
+    // ── Boosted(MatchNone) → MatchNone ────────────────────────────────────────
+
+    #[test]
+    fn test_boosted_match_none() {
+        let q = QueryNode::Boosted {
+            boost: 2.0,
+            query: Box::new(QueryNode::MatchNone),
+        };
+        assert_eq!(rewrite(q), QueryNode::MatchNone);
+    }
+
+    // ── deep nesting converges ────────────────────────────────────────────────
+
+    #[test]
+    fn test_deep_nesting_converges() {
+        // Bool(must=[Bool(must=[Bool(must=[term])])])
+        let t = term("x", "y");
+        let q = bool_must(vec![bool_must(vec![bool_must(vec![t.clone()])])]);
+        assert_eq!(rewrite(q), t);
+    }
+
+    fn match_op(operator: BoolOperator, msm: Option<MinShouldMatch>) -> QueryNode {
+        QueryNode::Match {
+            field: "message".into(),
+            query: "SIP 403 Forbidden".into(),
+            operator,
+            analyzer: None,
+            boost: None,
+            minimum_should_match: msm,
+            lenient: false,
+        }
+    }
+
+    /// #1504: a log index asks for AND. Omitted operators take it. An explicit
+    /// OR, a `minimum_should_match` clause, and a phrase `multi_match` do not.
+    #[test]
+    fn default_and_fills_only_omitted_match_operators() {
+        let mut req = SearchRequest {
+            query: QueryNode::Bool {
+                must: vec![match_op(BoolOperator::Omitted, None)],
+                should: vec![match_op(BoolOperator::Or, None)],
+                must_not: vec![],
+                filter: vec![match_op(
+                    BoolOperator::Omitted,
+                    Some(MinShouldMatch::Fixed(2)),
+                )],
+                minimum_should_match: None,
+            },
+            rescore: vec![crate::ast::RescoreQuery {
+                window_size: 10,
+                query: Some(crate::ast::RescoreQueryInner {
+                    rescore_query: QueryNode::MultiMatch {
+                        fields: vec!["message".into()],
+                        query: "SIP 403".into(),
+                        match_type: crate::ast::MultiMatchType::BestFields,
+                        operator: None,
+                        analyzer: None,
+                        boost: None,
+                        slop: 0,
+                        max_expansions: 50,
+                        lenient: false,
+                    },
+                    query_weight: 1.0,
+                    rescore_query_weight: 1.0,
+                }),
+                script: None,
+            }],
+            ..SearchRequest::default()
+        };
+        apply_default_match_operator(&mut req, BoolOperator::And);
+
+        let QueryNode::Bool {
+            must,
+            should,
+            filter,
+            ..
+        } = req.query
+        else {
+            panic!("expected bool");
+        };
+        assert!(
+            matches!(
+                must[0],
+                QueryNode::Match {
+                    operator: BoolOperator::And,
+                    ..
+                }
+            ),
+            "omitted match becomes AND"
+        );
+        assert!(
+            matches!(
+                should[0],
+                QueryNode::Match {
+                    operator: BoolOperator::Or,
+                    ..
+                }
+            ),
+            "explicit OR stays OR"
+        );
+        assert!(
+            matches!(
+                filter[0],
+                QueryNode::Match {
+                    operator: BoolOperator::Omitted,
+                    ..
+                }
+            ),
+            "minimum_should_match keeps the omitted OR form"
+        );
+        let rescore = req.rescore[0].query.as_ref().unwrap();
+        assert!(
+            matches!(
+                rescore.rescore_query,
+                QueryNode::MultiMatch {
+                    operator: Some(BoolOperator::And),
+                    ..
+                }
+            ),
+            "an omitted multi_match operator, including inside rescore, becomes AND"
+        );
+    }
+}

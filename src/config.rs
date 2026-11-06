@@ -1,283 +1,467 @@
-//! 加载并验证 `etc/config.toml` 中的应用配置。
+//! Application configuration models and validation for Amemory.
 
-use std::{net::SocketAddr, path::PathBuf};
+use std::net::SocketAddr;
+use std::path::{Path, PathBuf};
 
-use serde::Deserialize;
-use toolkit_rs::{config, logger::LogConfig};
+use amemory_adapter::{
+    DEFAULT_BOOKS_INDEX, DEFAULT_MEMORY_INDEX, DEFAULT_SKILLS_INDEX, XerjConfig,
+};
+use amemory_mcp::DocumentImportPolicy;
+use eyre::{Result, bail, eyre};
+use serde::{Deserialize, Serialize};
+use toolkit_rs::{
+    config::read_config_default,
+    logger::{LogConfig, LogStyle, string_to_level},
+    painc::PaincConf,
+};
 
-/// 应用配置文件的固定路径。
-pub const CONFIG_PATH: &str = "etc/config.toml";
+/// Default configuration file path relative to the workspace root.
+pub const DEFAULT_CONFIG_PATH: &str = "etc/config.toml";
 
-/// Memvid MCP 的完整运行配置。
-#[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
+/// Top-level runtime configuration loaded from `etc/config.toml`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AppConfig {
-    /// MCP Server 和传输配置。
+    /// Server mode and MCP HTTP transport settings.
+    #[serde(default)]
     pub server: ServerConfig,
-    /// Memvid 与 Skill 路径配置。
+    /// Filesystem paths for Skill and Book catalogs.
+    #[serde(default)]
     pub storage: StorageConfig,
-    /// 电子书二进制文档导入配置。
+    /// Embedded XERJ engine and listener configuration.
+    #[serde(default)]
+    pub xerj: XerjSectionConfig,
+    /// Security policy for local and Base64 document imports.
+    #[serde(default)]
     pub document_import: DocumentImportConfig,
-    /// 文档向量嵌入配置。
-    pub embedding: EmbeddingConfig,
-    /// 日志输出与轮转配置。
-    pub logger: LogConfig,
-    /// panic 处理配置。
-    pub panic: PanicConfig,
-}
-
-/// MCP Server 的传输配置。
-#[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ServerConfig {
-    /// MCP 传输方式。
-    pub transport: TransportMode,
-    /// Streamable HTTP 的监听地址。
-    pub listen: SocketAddr,
-    /// 是否仅同步 Skill 后退出。
-    pub sync_skills_only: bool,
-}
-
-/// Memvid 存储和 Skill 源目录配置。
-#[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct StorageConfig {
-    /// Memvid 存储文件路径。
-    pub memory: PathBuf,
-    /// Skill 根目录路径。
-    pub skills: PathBuf,
-    /// Markdown 电子书根目录路径。
-    pub books: PathBuf,
-}
-
-/// Book 文档上传和本地读取的安全边界。
-#[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct DocumentImportConfig {
-    /// 单个 PDF 或 Office 文档允许的最大字节数。
-    pub max_file_bytes: usize,
-    /// `source_path` 允许读取的根目录；Base64 上传不受此项影响。
-    pub allowed_roots: Vec<PathBuf>,
-}
-
-/// 导入文档时使用的向量嵌入配置。
-#[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct EmbeddingConfig {
-    /// 嵌入提供方。
-    pub provider: EmbeddingProviderMode,
-    /// 本地 ONNX 文本模型名。
-    pub local_model: String,
-    /// `OpenAI` Embeddings 模型名。
-    pub openai_model: String,
-    /// 本地 ONNX 模型和 tokenizer 所在目录。
-    pub models_dir: PathBuf,
-
-    /// `OpenAI` API key 所在环境变量名。
-    pub api_key_env: String,
-    /// `OpenAI` 兼容 API 的基础 URL。
-    pub base_url: String,
-    /// `OpenAI` 请求超时秒数。
-    pub timeout_secs: u64,
-    /// `OpenAI` 限流请求最大重试次数。
-    pub max_retries: u32,
-}
-
-/// 文档导入支持的向量嵌入提供方。
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
-#[serde(rename_all = "lowercase")]
-pub enum EmbeddingProviderMode {
-    /// 只建立 Memvid 词法和时间索引。
-    None,
-    /// 使用本地 ONNX 文本模型。
-    Local,
-    /// 使用 `OpenAI` 兼容 Embeddings API。
-    Openai,
-}
-
-/// panic hook 的行为配置。
-#[derive(Clone, Copy, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PanicConfig {
-    /// 记录 panic 后是否立即退出进程。
-    pub exit: bool,
-}
-
-/// MCP Server 支持的传输方式。
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
-#[serde(rename_all = "lowercase")]
-pub enum TransportMode {
-    /// 通过标准输入输出与本地 MCP Host 通信。
-    Stdio,
-    /// 通过 Stateless Streamable HTTP 通信。
-    Http,
-}
-
-/// 从 [`CONFIG_PATH`] 读取并验证配置。
-///
-/// # Errors
-///
-/// 配置文件不存在、TOML 内容无法反序列化，或配置值违反运行约束时返回错误。
-pub fn load() -> eyre::Result<AppConfig> {
-    let config = config::read_config::<AppConfig>(CONFIG_PATH)
-        .map_err(|error| eyre::eyre!("failed to read {CONFIG_PATH}: {error:#}"))?;
-    config.validate()?;
-    Ok(config)
+    /// Logger configuration (`toolkit-rs`).
+    #[serde(default)]
+    pub logger: LoggerSectionConfig,
+    /// Panic handler configuration (`toolkit-rs`).
+    #[serde(default)]
+    pub panic: PanicSectionConfig,
 }
 
 impl AppConfig {
-    fn validate(&self) -> eyre::Result<()> {
-        if self.storage.memory.as_os_str().is_empty() {
-            eyre::bail!("storage.memory must not be empty");
+    /// Load [`AppConfig`] from `path` (defaulting to [`DEFAULT_CONFIG_PATH`]),
+    /// or return [`AppConfig::default()`] if the file does not exist.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the configuration file exists but cannot be parsed.
+    pub fn load(path: Option<&str>) -> Result<Self> {
+        let cfg_file = path.unwrap_or(DEFAULT_CONFIG_PATH);
+        if !Path::new(cfg_file).is_file() {
+            return Ok(Self::default());
         }
+        read_config_default(cfg_file).map_err(|e| eyre!("加载配置文件 `{cfg_file}` 失败: {e}"))
+    }
+
+    /// Validate configuration invariants and convert into runtime settings.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if paths, ports, or limits are invalid.
+    pub fn validate(&self) -> Result<()> {
         if self.storage.skills.as_os_str().is_empty() {
-            eyre::bail!("storage.skills must not be empty");
+            bail!("storage.skills 路径不能为空");
         }
         if self.storage.books.as_os_str().is_empty() {
-            eyre::bail!("storage.books must not be empty");
+            bail!("storage.books 路径不能为空");
         }
-        if self.storage.books == self.storage.skills {
-            eyre::bail!("storage.books and storage.skills must use different directories");
+        if self.xerj.data_dir.as_os_str().is_empty() {
+            bail!("xerj.data_dir 路径不能为空");
+        }
+        if self.xerj.skills_index.trim().is_empty()
+            || self.xerj.books_index.trim().is_empty()
+            || self.xerj.memory_index.trim().is_empty()
+        {
+            bail!("xerj 索引名称 (skills_index / books_index / memory_index) 不能为空");
         }
         if self.document_import.max_file_bytes == 0 {
-            eyre::bail!("document_import.max_file_bytes must be at least 1");
+            bail!("document_import.max_file_bytes 必须大于 0");
         }
-        if self
-            .document_import
-            .allowed_roots
-            .iter()
-            .any(|root| root.as_os_str().is_empty())
+        if self.server.max_request_body_bytes == 0 {
+            bail!("server.max_request_body_bytes 必须大于 0");
+        }
+        if !self.server.endpoint_path.starts_with('/') {
+            bail!(
+                "server.endpoint_path `{}` 必须以 `/` 开头",
+                self.server.endpoint_path
+            );
+        }
+        let bind_addr = self.server.socket_addr()?;
+        if matches!(self.server.mode, ServerMode::McpHttp | ServerMode::Server)
+            && !self.server.allow_remote
+            && !bind_addr.ip().is_loopback()
         {
-            eyre::bail!("document_import.allowed_roots must not contain empty paths");
-        }
-        if self.embedding.provider == EmbeddingProviderMode::Local {
-            if self.embedding.local_model.trim().is_empty() {
-                eyre::bail!("embedding.local_model must not be empty for local embeddings");
-            }
-            if self.embedding.models_dir.as_os_str().is_empty() {
-                eyre::bail!("embedding.models_dir must not be empty for local embeddings");
-            }
-        }
-        if self.embedding.provider == EmbeddingProviderMode::Openai {
-            if self.embedding.openai_model.trim().is_empty() {
-                eyre::bail!("embedding.openai_model must not be empty for OpenAI embeddings");
-            }
-            if self.embedding.api_key_env.trim().is_empty() {
-                eyre::bail!("embedding.api_key_env must not be empty for OpenAI embeddings");
-            }
-            if self.embedding.base_url.trim().is_empty() {
-                eyre::bail!("embedding.base_url must not be empty for OpenAI embeddings");
-            }
-            if self.embedding.timeout_secs == 0 {
-                eyre::bail!("embedding.timeout_secs must be at least 1");
-            }
-        }
-        if self.logger.size_mb == 0 {
-            eyre::bail!("logger.size_mb must be at least 1");
-        }
-        if self.server.transport == TransportMode::Http && !self.server.listen.ip().is_loopback() {
-            eyre::bail!(
-                "server.listen must be a loopback address; use a local reverse proxy for remote access"
-            );
-        }
-        if self.server.transport == TransportMode::Stdio && self.logger.console {
-            eyre::bail!(
-                "logger.console must be false for stdio because stdout carries the MCP protocol"
-            );
+            bail!("非回环地址 `{bind_addr}` 需要显式设置 server.allow_remote = true");
         }
         Ok(())
     }
-}
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::net::{IpAddr, Ipv4Addr};
-
-    fn test_config(transport: TransportMode) -> AppConfig {
-        let logger = LogConfig {
-            console: transport == TransportMode::Http,
-            ..LogConfig::default()
-        };
-        AppConfig {
-            server: ServerConfig {
-                transport,
-                listen: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 3000),
-                sync_skills_only: false,
-            },
-            storage: StorageConfig {
-                memory: PathBuf::from("memvid.mv2"),
-                skills: PathBuf::from("skills"),
-                books: PathBuf::from("books"),
-            },
-            document_import: DocumentImportConfig {
-                max_file_bytes: 32 * 1024 * 1024,
-                allowed_roots: vec![PathBuf::from("uploads")],
-            },
-            embedding: EmbeddingConfig {
-                provider: EmbeddingProviderMode::None,
-                local_model: "bge-small-en-v1.5".to_owned(),
-                openai_model: "text-embedding-3-small".to_owned(),
-                models_dir: PathBuf::from("models/text"),
-
-                api_key_env: "OPENAI_API_KEY".to_owned(),
-                base_url: "https://api.openai.com/v1".to_owned(),
-                timeout_secs: 30,
-                max_retries: 3,
-            },
-            logger,
-            panic: PanicConfig { exit: true },
+    /// Build the [`XerjConfig`] consumed by [`amemory_adapter::XerjAdapter`].
+    #[must_use]
+    pub fn to_xerj_config(&self) -> XerjConfig {
+        XerjConfig {
+            data_dir: self.xerj.data_dir.clone(),
+            skills_index: self.xerj.skills_index.clone(),
+            books_index: self.xerj.books_index.clone(),
+            memory_index: self.xerj.memory_index.clone(),
+            embed_mode: self.xerj.embed_mode.clone(),
+            bind_address: self.xerj.bind_address.clone(),
+            es_compat_port: self.xerj.es_compat_port,
+            rest_port: self.xerj.rest_port,
+            grpc_port: self.xerj.grpc_port,
+            external_es_url: self.xerj.external_es_url.clone(),
         }
     }
 
-    #[test]
-    fn loads_repository_configuration() {
-        let config = load().expect("repository configuration should be valid");
-
-        assert_eq!(config.server.transport, TransportMode::Http);
-        assert_eq!(config.server.listen.port(), 3000);
-        assert_eq!(config.storage.memory, PathBuf::from("memvid.mv2"));
-        assert_eq!(config.storage.skills, PathBuf::from("skills"));
-        assert_eq!(config.storage.books, PathBuf::from("books"));
-        assert_eq!(config.document_import.max_file_bytes, 32 * 1024 * 1024);
-        assert_eq!(config.embedding.provider, EmbeddingProviderMode::None);
+    /// Resolve the optional XERJ Hub API key from `xerj.hub_api_key` or the
+    /// `XERJ_HUB_API_KEY` environment variable.
+    #[must_use]
+    pub fn resolve_hub_api_key(&self) -> Option<String> {
+        self.xerj
+            .hub_api_key
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(ToOwned::to_owned)
+            .or_else(|| {
+                std::env::var("XERJ_HUB_API_KEY")
+                    .ok()
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+            })
     }
 
-    #[test]
-    fn accepts_http_configuration() {
-        assert!(
-            test_config(TransportMode::Http).validate().is_ok(),
-            "valid HTTP configuration should pass"
-        );
+    /// Build the [`DocumentImportPolicy`] consumed by [`amemory_mcp::AmemoryToolProvider`].
+    #[must_use]
+    pub fn to_import_policy(&self) -> DocumentImportPolicy {
+        DocumentImportPolicy {
+            allowed_roots: self.document_import.allowed_roots.clone(),
+            max_file_bytes: self.document_import.max_file_bytes,
+        }
     }
 
-    #[test]
-    fn rejects_public_http_listener() {
-        let mut config = test_config(TransportMode::Http);
-        config.server.listen = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 3000);
-
-        let error = config
-            .validate()
-            .expect_err("public HTTP listener should fail");
-        assert!(
-            error.to_string().contains("loopback"),
-            "unexpected error: {error}"
-        );
+    /// Convert `[logger]` configuration into `toolkit_rs::logger::LogConfig`.
+    ///
+    /// In [`ServerMode::McpStdio`] mode, console output is forced off so `stdout`
+    /// remains exclusively reserved for the MCP JSON-RPC protocol stream.
+    #[must_use]
+    pub fn to_toolkit_log_config(&self) -> LogConfig {
+        let console = if self.server.mode == ServerMode::McpStdio {
+            false
+        } else {
+            self.logger.console
+        };
+        LogConfig {
+            level: string_to_level(&self.logger.level),
+            size_mb: self.logger.size_mb,
+            console,
+            dir: self.logger.dir.clone(),
+            keep_day: None,
+            keep_file_count: Some(3),
+            filters: None,
+            log_name: Some("amemory".to_string()),
+            style: LogStyle::Default,
+            cleanup_sync: Some(false),
+        }
     }
 
-    #[test]
-    fn rejects_console_logging_for_stdio() {
-        let mut config = test_config(TransportMode::Stdio);
-        config.logger.console = true;
-
-        let error = config
-            .validate()
-            .expect_err("stdio console logging should fail");
-        assert!(
-            error
-                .to_string()
-                .contains("stdout carries the MCP protocol"),
-            "unexpected error: {error}"
-        );
+    /// Convert `[panic]` configuration into `toolkit_rs::painc::PaincConf`.
+    #[must_use]
+    pub fn to_toolkit_panic_conf(&self) -> PaincConf {
+        PaincConf {
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            build_time: "2026-11-06".to_string(),
+            painc_exit: self.panic.exit_on_panic,
+        }
     }
+}
+
+/// Execution mode for the `amemory` binary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ServerMode {
+    /// Synchronize Skills and Books into XERJ and exit.
+    Sync,
+    /// Run unified MCP server over stdio.
+    #[default]
+    #[serde(alias = "stdio", alias = "mcp_stdio")]
+    McpStdio,
+    /// Run unified MCP server over Streamable HTTP.
+    #[serde(alias = "http", alias = "mcp_http")]
+    McpHttp,
+    /// Run full XERJ server runtime (REST + ES-compat + Console + gRPC) alongside unified MCP HTTP.
+    Server,
+}
+
+/// Server transport and endpoint configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServerConfig {
+    /// Execution mode (`sync`, `mcp-stdio`, `mcp-http`, or `server`).
+    #[serde(default)]
+    pub mode: ServerMode,
+    /// Bind IP address for the MCP HTTP server (`127.0.0.1` by default).
+    #[serde(default = "default_host")]
+    pub host: String,
+    /// Bind port for the MCP HTTP server (`8000` by default).
+    #[serde(default = "default_port")]
+    pub port: u16,
+    /// HTTP path where MCP is mounted (`/mcp` by default).
+    #[serde(default = "default_endpoint_path")]
+    pub endpoint_path: String,
+    /// Whether non-loopback binds are permitted for MCP HTTP (`false` by default).
+    #[serde(default)]
+    pub allow_remote: bool,
+    /// Maximum HTTP request body size in bytes (`16 MiB` by default).
+    #[serde(default = "default_max_request_body_bytes")]
+    pub max_request_body_bytes: usize,
+}
+
+impl Default for ServerConfig {
+    fn default() -> Self {
+        Self {
+            mode: ServerMode::default(),
+            host: default_host(),
+            port: default_port(),
+            endpoint_path: default_endpoint_path(),
+            allow_remote: false,
+            max_request_body_bytes: default_max_request_body_bytes(),
+        }
+    }
+}
+
+impl ServerConfig {
+    /// Parse `host` and `port` into a [`SocketAddr`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `host:port` is not a valid socket address.
+    pub fn socket_addr(&self) -> Result<SocketAddr> {
+        format!("{}:{}", self.host.trim(), self.port)
+            .parse::<SocketAddr>()
+            .map_err(|e| eyre!("解析 server 地址 `{}:{}` 失败: {e}", self.host, self.port))
+    }
+}
+
+/// Paths for Skill and Book catalog directories on disk.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StorageConfig {
+    /// Root directory containing Skill subdirectories (`./resource/skills` by default).
+    #[serde(default = "default_skills_dir")]
+    pub skills: PathBuf,
+    /// Root directory containing Book subdirectories (`./resource/books` by default).
+    #[serde(default = "default_books_dir")]
+    pub books: PathBuf,
+}
+
+impl Default for StorageConfig {
+    fn default() -> Self {
+        Self {
+            skills: default_skills_dir(),
+            books: default_books_dir(),
+        }
+    }
+}
+
+/// `[xerj]` configuration section in `etc/config.toml`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct XerjSectionConfig {
+    /// Directory where XERJ stores indices, segments, WAL, and the sync ledger.
+    #[serde(default = "default_xerj_data_dir")]
+    pub data_dir: PathBuf,
+    /// Index name for Skill chunks (`amemory-skills-v1` by default).
+    #[serde(default = "default_skills_index")]
+    pub skills_index: String,
+    /// Index name for Book chunks (`amemory-books-v1` by default).
+    #[serde(default = "default_books_index")]
+    pub books_index: String,
+    /// Index name for Memory chunks (`amemory-memory-v1` by default).
+    #[serde(default = "default_memory_index")]
+    pub memory_index: String,
+    /// Server-side embedding mode (`lexical` by default).
+    #[serde(default = "default_embed_mode")]
+    pub embed_mode: String,
+    /// Bind IP address for XERJ listeners in `server` mode (`127.0.0.1` by default).
+    #[serde(default = "default_host")]
+    pub bind_address: String,
+    /// Elasticsearch-compatible listener port in `server` mode (`9200` by default).
+    #[serde(default = "default_es_port")]
+    pub es_compat_port: u16,
+    /// Native REST listener port in `server` mode (`8080` by default).
+    #[serde(default = "default_rest_port")]
+    pub rest_port: u16,
+    /// gRPC listener port in `server` mode (`8081` by default).
+    #[serde(default = "default_grpc_port")]
+    pub grpc_port: u16,
+    /// Optional external XERJ ES-compatible URL override for MCP tool proxying.
+    #[serde(default)]
+    pub external_es_url: Option<String>,
+    /// Optional XERJ Hub API key (`xerj_hub_search`, `xerj_hub_install`, `xerj_hub_publish`).
+    /// Falls back to the `XERJ_HUB_API_KEY` environment variable when omitted.
+    #[serde(default)]
+    pub hub_api_key: Option<String>,
+}
+
+impl Default for XerjSectionConfig {
+    fn default() -> Self {
+        Self {
+            data_dir: default_xerj_data_dir(),
+            skills_index: default_skills_index(),
+            books_index: default_books_index(),
+            memory_index: default_memory_index(),
+            embed_mode: default_embed_mode(),
+            bind_address: default_host(),
+            es_compat_port: default_es_port(),
+            rest_port: default_rest_port(),
+            grpc_port: default_grpc_port(),
+            external_es_url: None,
+            hub_api_key: None,
+        }
+    }
+}
+
+/// Security limits for document imports into Books.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DocumentImportConfig {
+    /// Allowed local filesystem root directories for `file_path` imports (`["./resource/uploads"]` by default).
+    #[serde(default = "default_allowed_roots")]
+    pub allowed_roots: Vec<PathBuf>,
+    /// Maximum allowed document size in bytes (`50 MiB` by default).
+    #[serde(default = "default_max_file_bytes")]
+    pub max_file_bytes: usize,
+}
+
+impl Default for DocumentImportConfig {
+    fn default() -> Self {
+        Self {
+            allowed_roots: default_allowed_roots(),
+            max_file_bytes: default_max_file_bytes(),
+        }
+    }
+}
+
+/// `[logger]` section in `etc/config.toml`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LoggerSectionConfig {
+    /// Log level string (`error`, `warn`, `info`, `debug`, `trace`).
+    #[serde(default = "default_log_level")]
+    pub level: String,
+    /// Maximum log file size in MiB before rotation.
+    #[serde(default = "default_log_size_mb")]
+    pub size_mb: u64,
+    /// Whether to duplicate logs to console when not running in `mcp-stdio` mode.
+    #[serde(default = "default_true")]
+    pub console: bool,
+    /// Directory where log files are written.
+    #[serde(default = "default_log_dir")]
+    pub dir: String,
+}
+
+impl Default for LoggerSectionConfig {
+    fn default() -> Self {
+        Self {
+            level: default_log_level(),
+            size_mb: default_log_size_mb(),
+            console: true,
+            dir: default_log_dir(),
+        }
+    }
+}
+
+/// `[panic]` section in `etc/config.toml`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PanicSectionConfig {
+    /// Whether the process should exit after recording a panic.
+    #[serde(default = "default_true")]
+    pub exit_on_panic: bool,
+}
+
+impl Default for PanicSectionConfig {
+    fn default() -> Self {
+        Self {
+            exit_on_panic: true,
+        }
+    }
+}
+
+fn default_log_level() -> String {
+    "info".to_string()
+}
+
+const fn default_log_size_mb() -> u64 {
+    10
+}
+
+const fn default_true() -> bool {
+    true
+}
+
+fn default_log_dir() -> String {
+    "./logs".to_string()
+}
+
+fn default_host() -> String {
+    "127.0.0.1".to_string()
+}
+
+const fn default_port() -> u16 {
+    8000
+}
+
+fn default_endpoint_path() -> String {
+    "/mcp".to_string()
+}
+
+const fn default_max_request_body_bytes() -> usize {
+    16 * 1024 * 1024
+}
+
+fn default_skills_dir() -> PathBuf {
+    PathBuf::from("./resource/skills")
+}
+
+fn default_books_dir() -> PathBuf {
+    PathBuf::from("./resource/books")
+}
+
+fn default_allowed_roots() -> Vec<PathBuf> {
+    vec![PathBuf::from("./resource/uploads")]
+}
+
+fn default_xerj_data_dir() -> PathBuf {
+    PathBuf::from("./data/xerj")
+}
+
+fn default_skills_index() -> String {
+    DEFAULT_SKILLS_INDEX.to_string()
+}
+
+fn default_books_index() -> String {
+    DEFAULT_BOOKS_INDEX.to_string()
+}
+
+fn default_memory_index() -> String {
+    DEFAULT_MEMORY_INDEX.to_string()
+}
+
+fn default_embed_mode() -> String {
+    "lexical".to_string()
+}
+
+const fn default_es_port() -> u16 {
+    9200
+}
+
+const fn default_rest_port() -> u16 {
+    8080
+}
+
+const fn default_grpc_port() -> u16 {
+    8081
+}
+
+const fn default_max_file_bytes() -> usize {
+    50 * 1024 * 1024
 }

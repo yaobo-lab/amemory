@@ -1,0 +1,550 @@
+diff --git a/engine/crates/xerj-server/Cargo.toml b/engine/crates/xerj-server/Cargo.toml
+index cc2523d..73d2bc4 100644
+--- a/engine/crates/xerj-server/Cargo.toml
++++ b/engine/crates/xerj-server/Cargo.toml
+@@ -6,6 +6,10 @@ license.workspace = true
+ authors.workspace = true
+ description = "xerj — the unified search engine for AI: full-text, vectors, hybrid retrieval, agent memory, and log analytics in one binary; zero-config folder onboarding via `xerj autoindex`; Elasticsearch wire-compatible"
+ 
++[lib]
++name = "xerj_server"
++path = "src/lib.rs"
++
+ [[bin]]
+ name = "xerj"
+ path = "src/main.rs"
+@@ -22,7 +26,7 @@ xerj-logs    = { path = "../xerj-logs" }
+ xerj-ai      = { path = "../xerj-ai" }
+ xerj-compress = { path = "../xerj-compress" }
+ xerj-cluster  = { path = "../xerj-cluster" }
+-xerj-console-api     = { path = "../xerj-console-api" }
++xerj-console-api     = { path = "../xerj-console-api", optional = true }
+ xerj-autoindex = { path = "../xerj-autoindex" }
+ # Corpus Hub v2 client: `xerj hub …` and the `--def` code path.
+ xerj-hub     = { path = "../xerj-hub" }
+@@ -70,7 +74,8 @@ prost.workspace = true
+ # `--no-default-features` for a slimmer binary without the neural backend
+ # (the lexical + proxy backends still work).
+-default = ["neural", "decide-local"]
++default = ["neural", "decide-local", "console"]
++console = ["dep:xerj-console-api"]
+ neural = ["xerj-engine/neural"]
+ onnx-experimental = ["xerj-engine/onnx-experimental"]
+ # Tier-2 local decide head (issue #1057), ON by default since rc.80: the
+diff --git a/engine/crates/xerj-server/src/lib.rs b/engine/crates/xerj-server/src/lib.rs
+new file mode 100644
+index 0000000..f1f6d02
+--- /dev/null
++++ b/engine/crates/xerj-server/src/lib.rs
+@@ -0,0 +1,271 @@
++//! Library bootstrap entry points for embedding a full XERJ server runtime.
++//!
++//! Exposes the same Native REST, ES-compat (with Corpus Hub), Xerj Console,
++//! and gRPC (`XerjSearch` + `XerjHub`) listener orchestration used by the `xerj`
++//! binary so host applications can share an in-process [`Engine`] instance.
++
++use std::net::SocketAddr;
++#[cfg(feature = "console")]
++use std::path::Path;
++use std::sync::Arc;
++use std::time::Duration;
++
++use anyhow::{Context, Result};
++use tokio::net::TcpListener;
++#[cfg(feature = "console")]
++use tracing::warn;
++use tracing::{error, info};
++use xerj_api::{build_es_compat_router_with_hub, build_native_router, AppState};
++use xerj_common::{config::Config, metrics::Metrics};
++#[cfg(feature = "console")]
++use xerj_console_api::{state::ClusterMode, ConsoleState, RpConfig};
++use xerj_engine::Engine;
++
++pub mod grpc;
++pub mod grpc_hub;
++
++/// Bound listener addresses for a running embedded XERJ server.
++#[derive(Debug, Clone, Copy)]
++pub struct BoundServerAddrs {
++    /// Bound address for the Native REST API listener.
++    pub rest: SocketAddr,
++    /// Bound address for the Elasticsearch-compatible API listener.
++    pub es_compat: SocketAddr,
++    /// Bound address for the gRPC (`XerjSearch` + `XerjHub`) listener.
++    pub grpc: SocketAddr,
++}
++
++/// Handle to a running XERJ server started via [`start_with_engine`].
++pub struct EmbeddedServer {
++    addrs: BoundServerAddrs,
++    shutdown_tx: tokio::sync::watch::Sender<bool>,
++    join_handle: tokio::task::JoinHandle<Result<()>>,
++}
++
++impl EmbeddedServer {
++    /// Return the bound TCP addresses of all three XERJ listeners.
++    pub fn addrs(&self) -> BoundServerAddrs {
++        self.addrs
++    }
++
++    /// Return the base `http://host:port` URL of the ES-compatible listener.
++    pub fn es_base_url(&self) -> String {
++        format!("http://{}", self.addrs.es_compat)
++    }
++
++    /// Signal the server to begin graceful shutdown and wait for completion.
++    ///
++    /// # Errors
++    ///
++    /// Returns an error if the background task panicked or reported a fatal shutdown error.
++    pub async fn shutdown(self) -> Result<()> {
++        let _ = self.shutdown_tx.send(true);
++        self.join_handle.await.context("join embedded xerj-server")?
++    }
++
++    /// Wait until the server exits (for example, on Ctrl-C / SIGTERM or explicit shutdown).
++    ///
++    /// # Errors
++    ///
++    /// Returns an error if the server task fails.
++    pub async fn wait(self) -> Result<()> {
++        self.join_handle.await.context("join embedded xerj-server")?
++    }
++}
++
++/// Start the full XERJ server runtime (Native REST, ES-compat + Hub, Console, gRPC,
++/// background flusher, resource sampler, lifecycle manager, and WAL tap) over an
++/// existing [`Engine`] instance.
++///
++/// # Errors
++///
++/// Returns an error if listener binding, metrics creation, or console bootstrap fails.
++pub async fn start_with_engine(mut cfg: Config, engine: Arc<Engine>) -> Result<EmbeddedServer> {
++    let ip = cfg
++        .bind_ip()
++        .with_context(|| format!("invalid server.bind_address: {}", cfg.server.bind_address))?;
++
++    let es_std = std::net::TcpListener::bind(SocketAddr::new(ip, cfg.server.es_compat_port))
++        .with_context(|| format!("bind ES-compat listener on {}:{}", ip, cfg.server.es_compat_port))?;
++    es_std.set_nonblocking(true)?;
++    let es_addr = es_std.local_addr()?;
++
++    let rest_std = std::net::TcpListener::bind(SocketAddr::new(ip, cfg.server.rest_port))
++        .with_context(|| format!("bind native REST listener on {}:{}", ip, cfg.server.rest_port))?;
++    rest_std.set_nonblocking(true)?;
++    let rest_addr = rest_std.local_addr()?;
++
++    let grpc_std = std::net::TcpListener::bind(SocketAddr::new(ip, cfg.server.grpc_port))
++        .with_context(|| format!("bind gRPC listener on {}:{}", ip, cfg.server.grpc_port))?;
++    grpc_std.set_nonblocking(true)?;
++    let grpc_addr = grpc_std.local_addr()?;
++
++    cfg.server.es_compat_port = es_addr.port();
++    cfg.server.rest_port = rest_addr.port();
++    cfg.server.grpc_port = grpc_addr.port();
++
++    let metrics = Metrics::new().context("initialise XERJ metrics")?;
++    let storage_available = engine.cluster_state_boot_status().is_writable();
++
++    #[cfg(feature = "console")]
++    let xerj_console_state = {
++        let trusted_proxies = xerj_common::net::TrustedProxies::parse(&cfg.server.trusted_proxies)
++            .map_err(|why| anyhow::anyhow!("server.trusted_proxies: {why}"))?;
++
++        let xerj_console_bind_url = format!(
++            "http://{}:{}",
++            xerj_console_api::public_bind_host(&cfg.server.bind_address),
++            es_addr.port(),
++        );
++
++        if storage_available {
++            let outcome = xerj_console_api::bootstrap::run(
++                &engine,
++                Path::new(&cfg.server.data_dir),
++                &xerj_console_bind_url,
++            )
++            .await
++            .context("xerj-console bootstrap")?;
++            let console_rp = match RpConfig::from_bind_url(&xerj_console_bind_url) {
++                Ok(rp) => rp,
++                Err(why) => {
++                    warn!("Xerj Console passkey sign-in is unavailable: {why}");
++                    RpConfig::default()
++                }
++            };
++            Some(
++                ConsoleState::new_with_rp(
++                    engine.clone(),
++                    "local".to_string(),
++                    outcome.master_key,
++                    ClusterMode::Standalone,
++                    console_rp,
++                )
++                .with_trusted_proxies(trusted_proxies),
++            )
++        } else {
++            None
++        }
++    };
++
++    let state = AppState::new(cfg.clone(), (*engine).clone(), metrics);
++    xerj_engine::set_engine_metrics(state.metrics.clone());
++
++    {
++        let tap = state.engine.wal_tap.clone();
++        let tap_engine = state.engine.clone();
++        tokio::spawn(xerj_engine::wal_tap::run(tap, tap_engine));
++    }
++
++    #[allow(unused_mut)]
++    let mut native_router = build_native_router(state.clone());
++    let hub_shared = xerj_api::hub_api::HubShared::new(state.clone());
++    #[allow(unused_mut)]
++    let mut es_router = build_es_compat_router_with_hub(state.clone(), hub_shared.clone());
++    #[cfg(feature = "console")]
++    if let Some(console_state) = xerj_console_state {
++        let console_router = xerj_console_api::xerj_console_router(console_state);
++        native_router = native_router.merge(console_router.clone());
++        es_router = es_router.merge(console_router);
++    }
++
++    let flusher = storage_available.then(|| {
++        let flush_engine = state.engine.clone();
++        let interval = Duration::from_secs(cfg.storage.flush_interval_secs.max(1));
++        tokio::spawn(async move {
++            let mut ticker = tokio::time::interval(interval);
++            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
++            ticker.tick().await;
++            loop {
++                ticker.tick().await;
++                flush_engine.flush_all_if_needed().await;
++            }
++        })
++    });
++
++    if storage_available {
++        state.engine.spawn_resource_sampler();
++        state.engine.spawn_lifecycle_manager();
++    }
++
++    let es_listener = TcpListener::from_std(es_std)?;
++    let rest_listener = TcpListener::from_std(rest_std)?;
++
++    let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
++    let mut rest_shutdown = shutdown_rx.clone();
++    let mut es_shutdown = shutdown_rx.clone();
++    let mut grpc_shutdown = shutdown_rx.clone();
++
++    let mut rest_task = tokio::spawn(async move {
++        let svc = native_router.into_make_service_with_connect_info::<SocketAddr>();
++        if let Err(err) = axum::serve(rest_listener, svc)
++            .with_graceful_shutdown(async move {
++                let _ = rest_shutdown.wait_for(|&v| v).await;
++            })
++            .await
++        {
++            error!("native REST listener error: {err:#}");
++        }
++    });
++
++    let mut es_task = tokio::spawn(async move {
++        let svc = es_router.into_make_service_with_connect_info::<SocketAddr>();
++        if let Err(err) = axum::serve(es_listener, svc)
++            .with_graceful_shutdown(async move {
++                let _ = es_shutdown.wait_for(|&v| v).await;
++            })
++            .await
++        {
++            error!("ES-compat listener error: {err:#}");
++        }
++    });
++
++    let grpc_state = state.clone();
++    let mut grpc_task = tokio::spawn(async move {
++        if let Err(err) = grpc::serve_grpc_on(grpc_std, grpc_state, hub_shared, async move {
++            let _ = grpc_shutdown.wait_for(|&v| v).await;
++        })
++        .await
++        {
++            error!("gRPC listener error: {err:#}");
++        }
++    });
++
++    let internal_shutdown_tx = shutdown_tx.clone();
++    let join_handle = tokio::spawn(async move {
++        tokio::select! {
++            _ = tokio::signal::ctrl_c() => {
++                let _ = internal_shutdown_tx.send(true);
++            }
++            _ = shutdown_rx.wait_for(|&v| v) => {}
++            _ = &mut rest_task => {}
++            _ = &mut es_task => {}
++            _ = &mut grpc_task => {}
++        }
++
++        if let Some(flusher) = flusher {
++            flusher.abort();
++        }
++
++        if storage_available {
++            info!("flushing in-memory XERJ state before exit…");
++            let _ = tokio::time::timeout(Duration::from_secs(10), state.engine.flush_all_force()).await;
++        }
++
++        let _ = internal_shutdown_tx.send(true);
++        let _ = rest_task.await;
++        let _ = es_task.await;
++        let _ = grpc_task.await;
++        Ok(())
++    });
++
++    Ok(EmbeddedServer {
++        addrs: BoundServerAddrs {
++            rest: rest_addr,
++            es_compat: es_addr,
++            grpc: grpc_addr,
++        },
++        shutdown_tx,
++        join_handle,
++    })
++}
+diff --git a/engine/crates/xerj-server/src/main.rs b/engine/crates/xerj-server/src/main.rs
+index 59c0b6f..b79cd8c 100644
+--- a/engine/crates/xerj-server/src/main.rs
++++ b/engine/crates/xerj-server/src/main.rs
+@@ -133,6 +133,7 @@ use tracing_subscriber::EnvFilter;
+ use xerj_api::{build_es_compat_router_with_hub, build_native_router, AppState};
+ use xerj_cluster::{transport::TcpTransport, ClusterNode, ClusterRunner};
+ use xerj_common::{config::Config, metrics::Metrics};
++#[cfg(feature = "console")]
+ use xerj_console_api::{state::ClusterMode, ConsoleState, RpConfig};
+ use xerj_engine::Engine;
+ 
+@@ -687,11 +688,14 @@ fn print_startup_banner(
+     }
+     println!(" Started in   {}ms", startup_ms);
+     println!();
+-    println!(
+-        " Xerj Console UI    http://localhost:{}/_xerj-console/  ({} files bundled)",
+-        bound.es.port(),
+-        xerj_console_api::spa::asset_count(),
+-    );
+-    println!();
++    #[cfg(feature = "console")]
++    {
++        println!(
++            " Xerj Console UI    http://localhost:{}/_xerj-console/  ({} files bundled)",
++            bound.es.port(),
++            xerj_console_api::spa::asset_count(),
++        );
++        println!();
++    }
+ 
+     // ── Honesty banner: surface deployment-security expectations ──────────
+@@ -4877,85 +4881,88 @@ async fn run() -> anyhow::Result<()> {
+     //    their WAL and flush a new segment. The Console surface is therefore
+     //    absent until a supported restart instead of mounting with a made-up
+     //    key or partially-initialized stores.
+-    let xerj_console_bind_url = format!(
+-        "http://{}:{}",
+-        // Every loopback or unspecified bind is *addressed* as `localhost`
+-        // (issue #935): browsers refuse an IP-literal WebAuthn origin
+-        // outright, so a first-launch link printed with `127.0.0.1` or
+-        // `[::1]` could never complete passkey enrolment even once the
+-        // relying party is derived from this same URL. Non-loopback
+-        // addresses keep their spelling, IPv6 bracketed.
+-        xerj_console_api::public_bind_host(&cfg.server.bind_address),
+-        // The bound ES-compat port (8c), not `cfg.server.es_compat_port`: with
+-        // an ephemeral port (`= 0`) the config value is never the port the
+-        // node ends up listening on (issue #469).
+-        bound.es.port(),
+-    );
+-    let xerj_console_node_id: String = match (cfg.cluster.enabled, cluster_listen_addr) {
+-        // The same string the cluster transport registered as this node's id.
+-        (true, Some(addr)) => addr.to_string(),
+-        // Unreachable: 8b refuses a cluster bind that has no socket address.
+-        // Report the setting as written rather than invent an identity.
+-        (true, None) => format!("{}:{}", cfg.server.bind_address, cfg.cluster.port),
+-        (false, _) => "local".to_string(),
+-    };
+-    let xerj_console_cluster_mode = if cfg.cluster.enabled {
+-        ClusterMode::Raft
+-    } else {
+-        ClusterMode::Standalone
+-    };
+-    // #76 S5-4: which reverse proxies (if any) may tell us who the client is.
+-    // Empty by default — an unconfigured node ignores `x-forwarded-for`
+-    // entirely and keys the auth rate limiter on the TCP peer. `validate()`
+-    // already rejected malformed entries, so this parse cannot fail; treat a
+-    // surprise as fatal rather than silently widening or narrowing trust.
+-    let trusted_proxies = xerj_common::net::TrustedProxies::parse(&cfg.server.trusted_proxies)
+-        .map_err(|why| anyhow::anyhow!("server.trusted_proxies: {why}"))?;
+-    if !trusted_proxies.is_empty() {
+-        info!(
+-            "trusting x-forwarded-for from {} configured proxy entr{}",
+-            cfg.server.trusted_proxies.len(),
+-            if cfg.server.trusted_proxies.len() == 1 {
+-                "y"
+-            } else {
+-                "ies"
+-            }
+-        );
+-    }
+-    let xerj_console_state = if storage_available {
+-        let outcome = xerj_console_api::bootstrap::run(
+-            &engine,
+-            Path::new(&cfg.server.data_dir),
+-            &xerj_console_bind_url,
+-        )
+-        .await
+-        .context("xerj-console bootstrap")?;
+-        Some({
+-            // #935: the WebAuthn relying party follows the address and port
+-            // the console is actually served on — `ConsoleState::new`'s
+-            // hard-coded `http://localhost:9200` origin meant every node on
+-            // another port refused the very first passkey enrolment with
+-            // "origin does not match". A non-loopback IP bind has no honest
+-            // RP (WebAuthn ids must be domains), so the console's passkey
+-            // sign-in is unavailable there rather than the node refusing to
+-            // serve its data-plane API over a console-only limitation.
+-            let console_rp = match RpConfig::from_bind_url(&xerj_console_bind_url) {
+-                Ok(rp) => rp,
+-                Err(why) => {
+-                    warn!("Xerj Console passkey sign-in is unavailable: {why}");
+-                    RpConfig::default()
+-                }
+-            };
+-            ConsoleState::new_with_rp(
+-                engine.clone(),
+-                xerj_console_node_id,
+-                outcome.master_key,
+-                xerj_console_cluster_mode,
+-                console_rp,
+-            )
+-            .with_trusted_proxies(trusted_proxies)
+-        })
+-    } else {
+-        warn!(
+-            "Xerj Console bootstrap and routes are disabled while cluster-state storage is unavailable"
+-        );
+-        None
++    #[cfg(feature = "console")]
++    let xerj_console_state = {
++        let xerj_console_bind_url = format!(
++            "http://{}:{}",
++            // Every loopback or unspecified bind is *addressed* as `localhost`
++            // (issue #935): browsers refuse an IP-literal WebAuthn origin
++            // outright, so a first-launch link printed with `127.0.0.1` or
++            // `[::1]` could never complete passkey enrolment even once the
++            // relying party is derived from this same URL. Non-loopback
++            // addresses keep their spelling, IPv6 bracketed.
++            xerj_console_api::public_bind_host(&cfg.server.bind_address),
++            // The bound ES-compat port (8c), not `cfg.server.es_compat_port`: with
++            // an ephemeral port (`= 0`) the config value is never the port the
++            // node ends up listening on (issue #469).
++            bound.es.port(),
++        );
++        let xerj_console_node_id: String = match (cfg.cluster.enabled, cluster_listen_addr) {
++            // The same string the cluster transport registered as this node's id.
++            (true, Some(addr)) => addr.to_string(),
++            // Unreachable: 8b refuses a cluster bind that has no socket address.
++            // Report the setting as written rather than invent an identity.
++            (true, None) => format!("{}:{}", cfg.server.bind_address, cfg.cluster.port),
++            (false, _) => "local".to_string(),
++        };
++        let xerj_console_cluster_mode = if cfg.cluster.enabled {
++            ClusterMode::Raft
++        } else {
++            ClusterMode::Standalone
++        };
++        // #76 S5-4: which reverse proxies (if any) may tell us who the client is.
++        // Empty by default — an unconfigured node ignores `x-forwarded-for`
++        // entirely and keys the auth rate limiter on the TCP peer. `validate()`
++        // already rejected malformed entries, so this parse cannot fail; treat a
++        // surprise as fatal rather than silently widening or narrowing trust.
++        let trusted_proxies = xerj_common::net::TrustedProxies::parse(&cfg.server.trusted_proxies)
++            .map_err(|why| anyhow::anyhow!("server.trusted_proxies: {why}"))?;
++        if !trusted_proxies.is_empty() {
++            info!(
++                "trusting x-forwarded-for from {} configured proxy entr{}",
++                cfg.server.trusted_proxies.len(),
++                if cfg.server.trusted_proxies.len() == 1 {
++                    "y"
++                } else {
++                    "ies"
++                }
++            );
++        }
++        if storage_available {
++            let outcome = xerj_console_api::bootstrap::run(
++                &engine,
++                Path::new(&cfg.server.data_dir),
++                &xerj_console_bind_url,
++            )
++            .await
++            .context("xerj-console bootstrap")?;
++            Some({
++                // #935: the WebAuthn relying party follows the address and port
++                // the console is actually served on — `ConsoleState::new`'s
++                // hard-coded `http://localhost:9200` origin meant every node on
++                // another port refused the very first passkey enrolment with
++                // "origin does not match". A non-loopback IP bind has no honest
++                // RP (WebAuthn ids must be domains), so the console's passkey
++                // sign-in is unavailable there rather than the node refusing to
++                // serve its data-plane API over a console-only limitation.
++                let console_rp = match RpConfig::from_bind_url(&xerj_console_bind_url) {
++                    Ok(rp) => rp,
++                    Err(why) => {
++                        warn!("Xerj Console passkey sign-in is unavailable: {why}");
++                        RpConfig::default()
++                    }
++                };
++                ConsoleState::new_with_rp(
++                    engine.clone(),
++                    xerj_console_node_id,
++                    outcome.master_key,
++                    xerj_console_cluster_mode,
++                    console_rp,
++                )
++                .with_trusted_proxies(trusted_proxies)
++            })
++        } else {
++            warn!(
++                "Xerj Console bootstrap and routes are disabled while cluster-state storage is unavailable"
++            );
++            None
++        }
+     };
+ 
+@@ -5084,6 +5091,7 @@ async fn run() -> anyhow::Result<()> {
+     // `XerjHub` service: one rate-limit budget per client across both.
+     let hub_shared = xerj_api::hub_api::HubShared::new(state.clone());
+     let mut es_router = build_es_compat_router_with_hub(state.clone(), hub_shared.clone());
++    #[cfg(feature = "console")]
+     if let Some(console_state) = xerj_console_state {
+         let xerj_console_router = xerj_console_api::xerj_console_router(console_state);
+         native_router = native_router.merge(xerj_console_router.clone());
+diff --git a/engine/crates/xerj-autoindex/src/extract/pdf.rs b/engine/crates/xerj-autoindex/src/extract/pdf.rs
+index 0000000..0000001 100644
+--- a/engine/crates/xerj-autoindex/src/extract/pdf.rs
++++ b/engine/crates/xerj-autoindex/src/extract/pdf.rs
+@@ -29,6 +29,7 @@ const MAX_PAGE_TEXT: usize = 16 << 20;
+ const MAX_EXTRACTED_TEXT: usize = 64 << 20;
+ const MAX_WORKER_OUTPUT: usize = 32 << 20;
+ const MAX_WORKER_STDERR: u64 = 64 << 10;
++#[cfg_attr(not(unix), allow(dead_code))]
+ const WORKER_ADDRESS_SPACE: u64 = 1536 << 20;
+ // The spool is an optional accelerator on the same filesystem and descriptor
+ // table as correctness-critical state. The byte ceiling includes pessimistic
+diff --git a/engine/crates/xerj-autoindex/src/extract/xls.rs b/engine/crates/xerj-autoindex/src/extract/xls.rs
+index 0000000..0000001 100644
+--- a/engine/crates/xerj-autoindex/src/extract/xls.rs
++++ b/engine/crates/xerj-autoindex/src/extract/xls.rs
+@@ -181,6 +181,7 @@ pub const WORKER_ARG: &str = "__extract-xls";
+ /// `current_exe()`. A cargo test's `current_exe()` is the *test* binary, which
+ /// does not carry the `__extract-xls` dispatch, so the isolation integration
+ /// test points this at the built `xerj` binary — mirrors `XERJ_PDF_WORKER_BIN`.
++#[cfg_attr(not(unix), allow(dead_code))]
+ const WORKER_BIN_ENV: &str = "XERJ_XLS_WORKER_BIN";
+ 
+ /// Address-space ceiling imposed on the worker (`RLIMIT_AS`). A crafted

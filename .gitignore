@@ -1,4 +1,5 @@
 /target
+/crates/xerj/engine/target
 Cargo.lock
 
 # Test files
@@ -6,10 +7,10 @@ test_*.json
 continue_test.json
 
 # Runtime data
-*.mv2
+/data/
 /logs/
-/uploads/*
-!/uploads/.gitkeep
+/resource/uploads/*
+!/resource/uploads/.gitkeep
 
 # IDE
 .vscode/

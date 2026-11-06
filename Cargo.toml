@@ -1,44 +1,80 @@
 [package]
-name = "xflash-mcp"
-version = "0.1.0"
-edition = "2024"
-rust-version = "1.88"
-description = "Model Context Protocol server for Memvid memory stores"
+name = "amemory"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Amemory + XERJ unified knowledge, memory, and MCP server"
 
-[features]
-default = []
-local-embedding = ["memvid-core/vec"]
+[lib]
+name = "amemory"
+path = "src/lib.rs"
+
+[[bin]]
+name = "amemory"
+path = "src/main.rs"
 
 [dependencies]
-memvid-core = { version = "2.0.140", features = ["api_embed"] }
+amemory-adapter = { path = "crates/adapter" }
+amemory-domain = { path = "crates/domain" }
+amemory-mcp = { path = "crates/mcp" }
+color-eyre.workspace = true
+eyre.workspace = true
+serde.workspace = true
+tokio.workspace = true
+toolkit-rs.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+toml.workspace = true
+
+[lints]
+workspace = true
+
+[workspace]
+resolver = "2"
+members = [
+    "crates/domain",
+    "crates/mcp",
+    "crates/adapter",
+]
+exclude = ["crates/xerj", "crates/xerj/engine"]
+
+[workspace.package]
+version = "0.2.0"
+edition = "2024"
+rust-version = "1.88"
+license = "Apache-2.0"
+authors = ["Amemory Contributors"]
+
+[workspace.dependencies]
+axum = { version = "0.7", features = ["macros"] }
+base64 = "0.23.1"
+blake3 = "1.8.7"
+chrono = { version = "0.4", features = ["serde"] }
+color-eyre = "0.6.5"
+eyre = "0.6.14"
 rmcp = { version = "3.9.0", features = [
     "transport-io",
     "transport-streamable-http-server",
 ] }
-tokio = { version = "1.54.1", features = [
-    "macros",
-    "net",
-    "rt-multi-thread",
-    "signal",
-    "sync",
-] }
-axum = "0.8"
-tower-http = { version = "0.7.1", features = ["limit"] }
-eyre = "0.6.14"
-color-eyre = "0.6.5"
-toolkit-rs = "1.0.31"
-log = "0.4.35"
+schemars = "1.2.3"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
-schemars = "1.2.3"
-base64 = "0.23.1"
-blake3 = "1.8.7"
+tempfile = "3"
+thiserror = "2"
+tokio = { version = "1", features = ["full"] }
+toml = "0.8"
+toolkit-rs = "1.0.31"
+tower-http = { version = "0.5", features = ["limit"] }
+tracing = "0.1"
 
-[lints.rust]
+[workspace.lints.rust]
 missing_docs = "warn"
 unsafe_op_in_unsafe_fn = "deny"
-unused_crate_dependencies = "warn"
 
-[lints.clippy]
+[workspace.lints.clippy]
 nursery = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }

@@ -1,0 +1,690 @@
+// ============================================================
+// Xerj Console backend — Xerj engine
+//
+// Talks the ES-compatible REST API on port 9200 (or wherever the
+// caller pointed it). Every dashboard's data shape is produced
+// by composing one or more `_search` calls + light client-side
+// reshape into the dashboard render contract.
+//
+// `probe()` is intentionally GET / so it costs ~0 on the engine.
+// ============================================================
+
+import { liveSecondBrain } from '../second-brain-api.js';
+import { schemaForSearch, indexNamesStrict } from '../schema.js';
+import { buildSearchBody } from '../search-body.js';
+import { CATALOG_INDEX, catalogQueryBody, parseCatalogHits, parseKnowledge } from '../catalog.js';
+import { listUserIndices, INTERNAL_INDICES } from '../console-index-api.js';
+
+// Aggregation materialisation bypass.
+//
+// Xerj v1.0.0-rc.1 has a known bug at
+// `engine/crates/xerj-engine/src/index.rs:3623`:
+//   `let materialisation_limit = (from + size + 100).max(256);`
+// This caps the doc set that aggregations run over.  When the
+// dashboard sends the standard ES idiom `size:0` for "aggs only",
+// the engine runs aggs over only ~256 docs and silently under-
+// reports sums / averages / terms.  We bypass by passing a large
+// `size` so the materialisation cap exceeds the corpus.  The
+// `.hits.hits` payload is discarded by every adapter below.
+// Track engine fix at: engine bug "agg materialisation cap".
+const AGG_BYPASS_SIZE = 9999;
+
+/** The knowledge surface — one session-authenticated read, same origin as
+ *  this SPA (the console API serves both). See knowledge.rs for the
+ *  payload; data/catalog.js#parseKnowledge for its client shape. */
+const KNOWLEDGE_PATH = '/_xerj-console/api/v1/knowledge';
+
+export const meta = {
+  id: 'xerj',
+  label: 'Xerj',
+  defaultBaseUrl: 'http://localhost:9200',
+  supports: {
+    search: true,
+    aggs: true,
+    knn: true,
+    semantic: true,
+    hybrid: true,
+    fsck: true,
+  },
+};
+
+/** Lightweight liveness check. `true` if the server responded with a
+ *  Xerj-shaped root payload. Costs one HTTP GET. */
+export async function probe(baseUrl, signal) {
+  try {
+    const r = await fetch(baseUrl + '/', { signal });
+    if (!r.ok) return false;
+    const j = await r.json().catch(() => ({}));
+    // Xerj's `/` returns ES-shaped info with a recognisable cluster_name
+    // ("xerj" by default) and version. Accept anything that looks vaguely
+    // ES-shaped so the same backend module also reports true against ES /
+    // OpenSearch (handy when we add those backends as siblings).
+    return typeof j === 'object' && j !== null
+      && (j.cluster_name !== undefined || j.tagline !== undefined || j.version !== undefined);
+  } catch (_e) {
+    return false;
+  }
+}
+
+/** Fetch live cat-indices for the picker / overview dashboards. */
+export async function listIndices(baseUrl, signal) {
+  const r = await fetch(baseUrl + '/_cat/indices?format=json', { signal });
+  if (!r.ok) return [];
+  return r.json().catch(() => []);
+}
+
+/**
+ * Search a single index through the Console backend's session-authenticated
+ * proxy instead of an unauthenticated same-origin fetch straight to the
+ * ES-compat data plane. The old direct call carried no `Authorization`
+ * header, so it silently 401'd on any engine started WITHOUT `--insecure`
+ * — the default, recommended posture — and every caller here treats a
+ * failed search as "no live adapter, fall back to mock" (see `search()`
+ * below), so the built-in dashboards quietly showed demo data on a
+ * correctly-secured deployment with no visible error at all.
+ *
+ * `baseUrl` is intentionally unused for the request target: the proxy is
+ * always served by the SAME Console instance the SPA is loaded from (this
+ * backend only ever talks to the local/built-in engine — see `meta`
+ * above), so the path is resolved relative to the current origin, same as
+ * every other Console-backend call in this codebase. Kept as a parameter
+ * for call-site compatibility.
+ *
+ * Scope: single exact index name only — no wildcard/`_all` resolution.
+ * See `xerj-console-api::data_sources::search`'s doc comment for why.
+ */
+export async function rawSearch(baseUrl, index, body, signal) {
+  const path = `/_xerj-console/api/v1/data-sources/connections/built-in/indices/${encodeURIComponent(index)}/search`;
+  const r = await fetch(path, {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+    signal,
+  });
+  if (!r.ok) {
+    const txt = await r.text().catch(() => '');
+    throw new Error(`Xerj _search ${index} HTTP ${r.status}: ${txt.slice(0, 200)}`);
+  }
+  return r.json();
+}
+
+// ── Dashboard ↔ live-data adapters ──────────────────────────────
+//
+// The dispatcher below maps `dashId` to the function that produces the
+// shape that the matching dashboard's render() expects. New dashboards
+// add a case here when ready; until then the `query.js` wrapper
+// transparently falls back to mock data.
+
+export async function search(baseUrl, dashId, ctx, signal) {
+  switch (dashId) {
+    case 'search-discover':       return liveSearchDiscover(baseUrl, ctx, signal);
+    case 'corpus':                return liveCorpus(baseUrl, ctx, signal);
+    case 'system':                return liveSystem(baseUrl, ctx, signal);
+    case 'logs-overview':         return liveLogsOverview(baseUrl, ctx, signal);
+    case 'data':                  return liveData(baseUrl, ctx, signal);
+    case 'ai-overview':           return liveAiOverview(baseUrl, ctx, signal);
+    case 'rag-quality':           return liveRagQuality(baseUrl, ctx, signal);
+    case 'vector-index':          return liveVectorIndex(baseUrl, ctx, signal);
+    case 'agent-memory':          return liveAgentMemory(baseUrl, ctx, signal);
+    // Second brain NEVER returns null: its adapter shapes every failure
+    // (engine down, no brains, 404 brain) into an honest state object,
+    // so the mock fallback in data/query.js can never fire for it —
+    // a fabricated brain would be worse than an empty one.
+    case 'second-brain':          return liveSecondBrain(baseUrl, ctx, signal);
+    case 'anomaly-detect':        return liveAnomalyDetect(baseUrl, ctx, signal);
+    case 'ingest-pipeline':       return liveIngestPipeline(baseUrl, ctx, signal);
+    default:                      return null; // signals "fall back to mock"
+  }
+}
+
+// ── corpus ──────────────────────────────────────────────────────────
+//
+// The Corpus home is the knowledge surface: ONE read —
+// GET /_xerj-console/api/v1/knowledge — that returns what a person asks the
+// moment `xerj brain` finishes: the whole-corpus totals, every dataset the
+// autoindex catalog records with its full field list, the relations
+// autoindex actually inferred between datasets, and a capability strip
+// grounded in real routes/commands/endpoints. Plus any other user index
+// the engine holds, so an engine that was filled some other way does not
+// read as "nothing indexed".
+//
+// NEVER returns null and never throws: data/query.js treats null as "fall
+// back to mock", and a fabricated corpus is the one thing this page must
+// not be able to show. A session that cannot read the endpoint (401/403)
+// or an unreachable console is returned as `{ status: 'error' }`.
+async function liveCorpus(_baseUrl, _ctx, signal) {
+  try {
+    const r = await fetch(KNOWLEDGE_PATH, {
+      signal,
+      credentials: 'same-origin',
+      headers: { accept: 'application/json' },
+    });
+    if (!r.ok) {
+      const err = new Error(`knowledge HTTP ${r.status}`);
+      err.status = r.status;
+      throw err;
+    }
+    return parseKnowledge(await r.json());
+  } catch (e) {
+    if (e && e.name === 'AbortError') throw e;
+    if (e && e.status === 404) return legacyLiveCorpus(signal); // engine older than the endpoint
+    // A fetch that never reached the engine is a bare TypeError ("Failed to
+    // fetch"): say what it means, as the Reader and the guest shell do.
+    const message = e instanceof TypeError ? 'engine unreachable' : String(e && e.message || e).slice(0, 200);
+    return { status: 'error', error: message, datasets: [], summaries: [], totals: null, relations: [], capabilities: [], brains: [] };
+  }
+}
+
+/** The pre-knowledge-endpoint path: the catalog index read directly plus
+ *  the index list — same cards, no totals/relations/capabilities. Kept for
+ *  engines built before the endpoint existed (the SPA and the binary ship
+ *  together, so this is belt-and-braces, and the node tests still pin it). */
+async function legacyLiveCorpus(signal) {
+  let datasets = [];
+  let catalogError = null;
+  try {
+    const resp = await rawSearch(null, CATALOG_INDEX, catalogQueryBody(), signal);
+    datasets = parseCatalogHits(resp?.hits?.hits || []);
+  } catch (e) {
+    // No catalog index yet (HTTP 404) is the ordinary empty state, not an error.
+    if (e instanceof TypeError) catalogError = 'engine unreachable';
+    else if (!/HTTP 404/.test(String(e))) catalogError = String(e && e.message || e).slice(0, 200);
+  }
+  let others = [];
+  try {
+    const known = new Set(datasets.map((d) => d.index));
+    others = (await listUserIndices(signal))
+      .filter((it) => !INTERNAL_INDICES.has(it.name) && !known.has(it.name))
+      .map((it) => ({ index: it.name, records: it.docs, emails: 0, attachments: 0, formats: [] }));
+  } catch (e) {
+    if (e && e.name === 'AbortError') throw e;
+    /* the catalog cards still stand on their own */
+  }
+  if (catalogError && !datasets.length && !others.length) return { status: 'error', error: catalogError, datasets: [], summaries: [] };
+  return { status: 'ok', datasets, summaries: others, totals: null, relations: [], capabilities: [], brains: [], _live: true };
+}
+
+// ── search-discover ────────────────────────────────────────────────
+//
+// The dashboard's `q` / `type` / `index` come in via ctx.search; the request
+// body is built by data/search-body.js — the SAME function the DSL preview
+// panel calls, so what is previewed is what runs (#923 review finding 8).
+// Hits, total and per-field facets all come from one round-trip. Every
+// failure is returned as `{ error }`; there is no fallback result set.
+async function liveSearchDiscover(baseUrl, ctx, signal) {
+  const search = ctx.search || {};
+  const q = search.q || '';
+  const type = search.type || 'match';
+  const requested = search.index || '*';
+  let index = requested === '*' ? '_all' : requested;
+
+  // The console's panel-search proxy resolves a single exact index only —
+  // wildcard/_all/multi-index is refused (501). `*` therefore runs against
+  // ONE index, and the result says which (`resolvedIndex`) so the page can
+  // show it: a picker that says `*` over results from one corpus is the
+  // "what I see is not what was indexed" bug (#923 review finding 3).
+  let narrowed = false;
+  if (index === '_all') {
+    const none = (error) => ({ error, hits: [], total: 0, took: 0, facets: {}, roles: null, resolvedIndex: null });
+    let names;
+    try { names = await indexNamesStrict(signal); } catch (e) {
+      if (e && e.name === 'AbortError') throw e;
+      return none(`could not read the index list (${String(e && e.message || e).slice(0, 80)})`);
+    }
+    if (!names.length) return none('nothing is indexed on this engine yet — run: xerj brain <folder>');
+    index = names[0];
+    narrowed = names.length > 1;
+  }
+
+  const roles = await schemaForSearch(baseUrl, index, signal);
+  const body = buildSearchBody(q, type, ctx.filters, roles, { sort: search.sort });
+  let response;
+  try {
+    response = await rawSearch(baseUrl, index, body, signal);
+  } catch (e) {
+    return { error: String(e && e.message || e), hits: [], total: 0, took: 0, facets: {}, roles, resolvedIndex: index, narrowed, request: body };
+  }
+
+  const total = response.hits?.total?.value ?? response.hits?.total ?? 0;
+  const hits = (response.hits?.hits || []).map((h) => ({
+    _id: h._id,
+    _index: h._index,
+    _score: h._score,
+    _source: h._source,
+    _ts: h._source?.[roles.dateField] || h._source?.['@timestamp'] || null,
+  }));
+  const facets = { _index: bucketsToFacet(response.aggregations?.by__index) };
+  for (const f of roles.keywordFields.slice(0, 3)) {
+    facets[f] = bucketsToFacet(response.aggregations?.[`by_${f}`]);
+  }
+  const dateBuckets = response.aggregations?.by_date?.buckets;
+  return {
+    total,
+    took: response.took ?? 0,
+    max_score: response.hits?.max_score ?? null,
+    hits,
+    facets,
+    histogram: Array.isArray(dateBuckets)
+      ? dateBuckets.map((b) => ({ label: String(b.key_as_string || b.key).slice(0, 10), value: Number(b.doc_count) || 0 }))
+      : null,
+    histogramField: roles.dateField || null,
+    roles,
+    resolvedIndex: index,
+    narrowed,
+    request: body,
+    _live: true,
+  };
+}
+
+function bucketsToFacet(agg) {
+  if (!agg || !Array.isArray(agg.buckets)) return [];
+  // ux/charts-ops.js#Facet reads { label, value, count }.
+  return agg.buckets.map((b) => ({ label: String(b.key), value: String(b.key), count: Number(b.doc_count) || 0 }));
+}
+
+// ── system ────────────────────────────────────────────────────────
+//
+// The system dashboard expects a rich infrastructure-monitoring
+// shape (hostCpu sparklines, topProcs, auth.failures…) that Xerj
+// itself doesn't expose — those come from a metric collector
+// pointed at the host (Metricbeat / collectd / OTLP). For the SE
+// demo path we return null here so the dashboard falls back to the
+// mock; once a metrics-ingest adapter lands in v0.7.x we'll fill
+// the live shape from the same xerj indices the user is watching.
+async function liveSystem(baseUrl, ctx, signal) {
+  // Every panel this dashboard shows (CPU/mem/net, per-host, top-processes,
+  // failed logins) is SAMPLE data — XERJ has no host-metrics agent, and the old
+  // `_cluster/stats` overlay never ran anyway (it fetched the logical
+  // backendBaseUrl :9200, which isn't reachable, so it returned null → mock).
+  // Return the sample shape flagged `_sample` (never null) so query.js labels
+  // the pill an honest "SAMPLE DATA" rather than "MOCK FALLBACK". The engine's
+  // real cluster figures (documents / indices / store) live on the Data tab.
+  const base = await loadMock('system', ctx);
+  base._sample = true;
+  return base;
+}
+
+// ── logs-overview ─────────────────────────────────────────────────
+//
+// Returns the rich logs-overview shape the dashboard expects, with
+// live counts overlaid where we can compute them from xerj aggs.
+// Fields the engine can't produce (peak rate, multi-host series,
+// per-host CPU sparklines) come from the mock so the canvas stays
+// fully populated for the SE demo.
+async function liveLogsOverview(baseUrl, ctx, signal) {
+  const since = rangeToSince(ctx.range || '24H');
+  const body = {
+    size: AGG_BYPASS_SIZE,  // rc.1 agg-cap workaround; see header
+    query: { range: { '@timestamp': { gte: since } } },
+    aggs: {
+      by_level: { terms: { field: 'level', size: 5 } },
+      by_service: { terms: { field: 'service', size: 8 } },
+      by_host: { terms: { field: 'host', size: 8 } },
+      timeline: {
+        date_histogram: { field: '@timestamp', fixed_interval: bucketSize(ctx.range || '24H') },
+        aggs: { by_level: { terms: { field: 'level', size: 5 } } },
+      },
+    },
+  };
+  let live;
+  try {
+    live = await rawSearch(baseUrl, 'logs-*', body, signal);
+  } catch (_e) {
+    return null; // graceful → mock fallback
+  }
+
+  // Use mock as the base shape so all panels render; overlay the few
+  // numbers we can verify live against xerj.
+  const { mock: mockData } = await import('../mock.js');
+  const base = mockData('logs-overview', ctx.range || '24H', {
+    cluster: ctx.cluster || '',
+    filters: ctx.filters || {},
+    customRange: ctx.customRange || null,
+  });
+
+  const total = live.hits?.total?.value ?? 0;
+  if (base?.metrics?.total) {
+    base.metrics.total.value = total;
+    base.metrics.total.formatted = total.toLocaleString('en-US');
+    base.metrics.total.delta = null;
+    base.metrics.total.hint = 'live · xerj';
+  }
+  base._live = {
+    total,
+    by_level: bucketsToFacet(live.aggregations?.by_level),
+    by_service: bucketsToFacet(live.aggregations?.by_service),
+    by_host: bucketsToFacet(live.aggregations?.by_host),
+    timeline: (live.aggregations?.timeline?.buckets || []).map((b) => ({
+      t: b.key, count: b.doc_count,
+      by_level: bucketsToFacet(b.by_level),
+    })),
+  };
+  return base;
+}
+
+function rangeToSince(range) {
+  switch (range) {
+    case '1H':  return 'now-1h';
+    case '24H': return 'now-24h';
+    case '7D':  return 'now-7d';
+    case '30D': return 'now-30d';
+    case '90D': return 'now-90d';
+    default:    return 'now-24h';
+  }
+}
+
+function bucketSize(range) {
+  switch (range) {
+    case '1H':  return '1m';
+    case '24H': return '1h';
+    case '7D':  return '6h';
+    case '30D': return '1d';
+    case '90D': return '1d';
+    default:    return '1h';
+  }
+}
+
+// ── data (data sources / index inventory) ─────────────────────────
+//
+// Real-only: the built-in connection, its indices and their mappings,
+// from the same facade the DATA section reads (data/data-sources.js —
+// see that module for why nothing here is ever seeded). The section
+// view builds its shape in app.js#buildSectionData; this adapter serves
+// any dashboard-form consumer of the same id.
+async function liveData(_baseUrl, _ctx, signal) {
+  const { listClusters, listIndices, listFields } = await import('../data-sources.js');
+  const clusters = await listClusters();
+  const indicesByCluster = {};
+  for (const c of clusters) {
+    indicesByCluster[c.id] = await listIndices(c.id);
+  }
+  const active = clusters[0]?.id || 'local';
+  const fieldsByIndex = {};
+  for (const i of indicesByCluster[active] || []) {
+    fieldsByIndex[i.name] = await listFields(i.name);
+  }
+  void signal;
+  return {
+    clusters,
+    indicesByCluster,
+    fieldsByIndex,
+    activeCluster: active,
+    focusIndex: (indicesByCluster[active] || [])[0]?.name || null,
+    _live: { indices: indicesByCluster[active] || [] },
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// LIVE ADAPTERS — every dashboard the demo runbook visits returns
+// numbers from real xerj indices. Each adapter starts from the mock
+// shape (so panels stay populated even when a sub-metric isn't yet
+// computable on the live engine) and overlays everything we CAN
+// compute. The status pill flips to "LIVE · XERJ" because the
+// outermost shape is real.
+// ─────────────────────────────────────────────────────────────────────
+
+const TIMELINE_BUCKET = (range) => bucketSize(range);
+
+function paretoFromBuckets(buckets) {
+  return (buckets || []).map((b) => ({ key: String(b.key), value: b.doc_count }));
+}
+
+async function loadMock(dashId, ctx) {
+  const { mock: mockData } = await import('../mock.js');
+  return mockData(dashId, ctx.range || '24H', {
+    cluster: ctx.cluster || '',
+    filters: ctx.filters || {},
+    customRange: ctx.customRange || null,
+  });
+}
+
+// ── ai-overview ───────────────────────────────────────────────────
+async function liveAiOverview(baseUrl, ctx, signal) {
+  const since = rangeToSince(ctx.range || '24H');
+  const body = {
+    size: AGG_BYPASS_SIZE,  // rc.1 agg-cap workaround; see header
+    query: { range: { '@timestamp': { gte: since } } },
+    aggs: {
+      total_prompt:    { sum: { field: 'prompt_tokens' } },
+      total_context:   { sum: { field: 'context_tokens' } },
+      total_completion:{ sum: { field: 'completion_tokens' } },
+      total_cost:      { sum: { field: 'cost_usd' } },
+      avg_latency:     { avg: { field: 'latency_ms' } },
+      cache_hits:      { terms: { field: 'cache_hit' } },
+      models:          { terms: { field: 'model', size: 8 } },
+      intents:         { terms: { field: 'intent', size: 12 } },
+      docs:            { terms: { field: 'top_doc', size: 12 } },
+      timeline:        { date_histogram: { field: '@timestamp', fixed_interval: TIMELINE_BUCKET(ctx.range || '24H') } },
+    },
+  };
+  let live;
+  try { live = await rawSearch(baseUrl, 'chat-events', body, signal); }
+  catch (_e) { return null; }
+  const total = live.hits?.total?.value ?? 0;
+  if (!total) return null;
+  const base = await loadMock('ai-overview', ctx);
+  const a = live.aggregations || {};
+  const totalPrompt   = Math.max(0, Math.round(a.total_prompt?.value    || 0));
+  const totalContext  = Math.max(0, Math.round(a.total_context?.value   || 0));
+  const totalComplete = Math.max(0, Math.round(a.total_completion?.value|| 0));
+  const totalTokens   = totalPrompt + totalContext + totalComplete;
+  const totalCost     = Math.max(0, a.total_cost?.value || 0);
+  const avgLatency    = Math.round(a.avg_latency?.value || 0);
+  const hits = (a.cache_hits?.buckets || []).reduce((m, b) => (m[String(b.key)] = b.doc_count, m), {});
+  const cacheRate = total ? ((hits.true || 0) * 100 / total) : 0;
+  const fmt = (n) => n >= 1e9 ? (n/1e9).toFixed(1)+'B' : n >= 1e6 ? (n/1e6).toFixed(1)+'M' : n >= 1e3 ? (n/1e3).toFixed(1)+'k' : String(n);
+  base.metrics = base.metrics || {};
+  base.metrics.queries  = { value: total,        formatted: fmt(total),       delta: null, hint: 'live · xerj' };
+  base.metrics.tokens   = { value: totalTokens,  formatted: fmt(totalTokens), delta: null, hint: 'live · xerj' };
+  base.metrics.cost     = { value: totalCost,    formatted: '$' + totalCost.toFixed(0), delta: null, hint: 'live · xerj' };
+  const costES = totalCost * 5.2;
+  base.metrics.savings  = { value: costES - totalCost, formatted: '$' + (costES - totalCost).toFixed(0), note: 'vs ES+Pinecone+Splunk' };
+  base.metrics.latency  = { value: avgLatency, formatted: String(avgLatency), delta: null, hint: 'live · xerj' };
+  base.metrics.cacheHit = { value: Math.round(cacheRate), formatted: String(Math.round(cacheRate)), delta: null, hint: 'live · xerj' };
+  base.models  = (a.models?.buckets  || []).map((b) => ({ label: b.key.toUpperCase(), value: b.doc_count }));
+  base.intents = (a.intents?.buckets || []).map((b) => ({ key: b.key, value: b.doc_count }));
+  base.topDocs = (a.docs?.buckets    || []).map((b) => ({ key: b.key, value: b.doc_count }));
+  const tlBuckets = a.timeline?.buckets || [];
+  if (tlBuckets.length) {
+    base.series = base.series || {};
+    base.series.queries = tlBuckets.map((b) => b.doc_count);
+  }
+  base._live = { source: 'chat-events', total };
+  return base;
+}
+
+// ── rag-quality ────────────────────────────────────────────────────
+async function liveRagQuality(baseUrl, ctx, signal) {
+  const since = rangeToSince(ctx.range || '24H');
+  const body = {
+    size: AGG_BYPASS_SIZE,  // rc.1 agg-cap workaround; see header
+    query: { range: { '@timestamp': { gte: since } } },
+    aggs: {
+      avg_prompt: { avg: { field: 'prompt_tokens' } },
+      avg_context:{ avg: { field: 'context_tokens' } },
+      avg_completion: { avg: { field: 'completion_tokens' } },
+      docs:       { terms: { field: 'top_doc', size: 12 } },
+      tenants:    { terms: { field: 'tenant', size: 8 } },
+    },
+  };
+  let live;
+  try { live = await rawSearch(baseUrl, 'chat-events', body, signal); }
+  catch (_e) { return null; }
+  const total = live.hits?.total?.value ?? 0;
+  if (!total) return null;
+  const base = await loadMock('rag-quality', ctx);
+  const a = live.aggregations || {};
+  base.metrics = base.metrics || {};
+  base.metrics.queries = { value: total, formatted: total.toLocaleString('en-US'), hint: 'live · xerj' };
+  if (base.metrics.contextLen) {
+    base.metrics.contextLen.value = Math.round(a.avg_context?.value || 0);
+    base.metrics.contextLen.formatted = Math.round(a.avg_context?.value || 0).toLocaleString('en-US');
+    base.metrics.contextLen.hint = 'live · xerj';
+  }
+  base.topDocs = (a.docs?.buckets || []).map((b) => ({ key: b.key, value: b.doc_count }));
+  base._live = { source: 'chat-events', total };
+  return base;
+}
+
+// ── vector-index ───────────────────────────────────────────────────
+async function liveVectorIndex(baseUrl, ctx, signal) {
+  const since = rangeToSince(ctx.range || '24H');
+  const body = {
+    size: AGG_BYPASS_SIZE,  // rc.1 agg-cap workaround; see header
+    query: { range: { '@timestamp': { gte: since } } },
+    aggs: {
+      ops:      { terms: { field: 'op', size: 5 } },
+      shards:   { terms: { field: 'shard', size: 16 } },
+      indexes:  { terms: { field: 'index', size: 8 } },
+      avg_recall:{ avg: { field: 'recall_at_10' } },
+      avg_lat:  { avg: { field: 'latency_ms' } },
+      timeline: { date_histogram: { field: '@timestamp', fixed_interval: TIMELINE_BUCKET(ctx.range || '24H') } },
+    },
+  };
+  let live;
+  try { live = await rawSearch(baseUrl, 'vector-ops', body, signal); }
+  catch (_e) { return null; }
+  const total = live.hits?.total?.value ?? 0;
+  if (!total) return null;
+  const base = await loadMock('vector-index', ctx);
+  const a = live.aggregations || {};
+  base.metrics = base.metrics || {};
+  base.metrics.qps     = { value: total, formatted: total.toLocaleString('en-US'), hint: 'live · xerj · ops/24h' };
+  base.metrics.recall  = { value: a.avg_recall?.value || 0,
+                            formatted: ((a.avg_recall?.value || 0) * 100).toFixed(1) + '%', hint: 'live · xerj' };
+  base.metrics.latency = { value: a.avg_lat?.value || 0,
+                            formatted: Math.round(a.avg_lat?.value || 0) + 'ms', hint: 'live · xerj' };
+  base.shards   = (a.shards?.buckets  || []).map((b) => ({ key: b.key, value: b.doc_count }));
+  base.byIndex  = (a.indexes?.buckets || []).map((b) => ({ key: b.key, value: b.doc_count }));
+  base.byOp     = (a.ops?.buckets     || []).map((b) => ({ key: b.key, value: b.doc_count }));
+  const tl = a.timeline?.buckets || [];
+  if (tl.length) {
+    base.series = base.series || {};
+    base.series.queries = tl.map((b) => b.doc_count);
+  }
+  base._live = { source: 'vector-ops', total };
+  return base;
+}
+
+// ── agent-memory ───────────────────────────────────────────────────
+async function liveAgentMemory(baseUrl, ctx, signal) {
+  const since = rangeToSince(ctx.range || '24H');
+  const body = {
+    size: AGG_BYPASS_SIZE,  // rc.1 agg-cap workaround; see header
+    query: { range: { '@timestamp': { gte: since } } },
+    aggs: {
+      ops:     { terms: { field: 'op', size: 8 } },
+      agents:  { terms: { field: 'agent', size: 8 } },
+      keys:    { terms: { field: 'memory_key', size: 12 } },
+      total_tokens:{ sum: { field: 'tokens' } },
+      avg_score:{ avg: { field: 'score' } },
+      timeline:{ date_histogram: { field: '@timestamp', fixed_interval: TIMELINE_BUCKET(ctx.range || '24H') } },
+    },
+  };
+  let live;
+  try { live = await rawSearch(baseUrl, 'agent-memory', body, signal); }
+  catch (_e) { return null; }
+  const total = live.hits?.total?.value ?? 0;
+  if (!total) return null;
+  const base = await loadMock('agent-memory', ctx);
+  const a = live.aggregations || {};
+  base.metrics = base.metrics || {};
+  base.metrics.ops      = { value: total, formatted: total.toLocaleString('en-US'), hint: 'live · xerj' };
+  base.metrics.tokens   = { value: a.total_tokens?.value || 0,
+                            formatted: ((a.total_tokens?.value || 0) / 1e3).toFixed(1) + 'k', hint: 'live · xerj' };
+  base.metrics.recall   = { value: a.avg_score?.value || 0,
+                            formatted: ((a.avg_score?.value || 0) * 100).toFixed(1) + '%', hint: 'live · xerj · avg score' };
+  base.byOp     = (a.ops?.buckets    || []).map((b) => ({ key: b.key, value: b.doc_count }));
+  base.byAgent  = (a.agents?.buckets || []).map((b) => ({ key: b.key, value: b.doc_count }));
+  base.topKeys  = (a.keys?.buckets   || []).map((b) => ({ key: b.key, value: b.doc_count }));
+  const tl = a.timeline?.buckets || [];
+  if (tl.length) {
+    base.series = base.series || {};
+    base.series.queries = tl.map((b) => b.doc_count);
+  }
+  base._live = { source: 'agent-memory', total };
+  return base;
+}
+
+// ── anomaly-detect ─────────────────────────────────────────────────
+async function liveAnomalyDetect(baseUrl, ctx, signal) {
+  const since = rangeToSince(ctx.range || '24H');
+  const body = {
+    size: AGG_BYPASS_SIZE,  // rc.1 agg-cap workaround; see header
+    query: { range: { '@timestamp': { gte: since } } },
+    aggs: {
+      kinds:    { terms: { field: 'kind', size: 8 } },
+      severity: { terms: { field: 'severity', size: 5 } },
+      services: { terms: { field: 'service', size: 8 } },
+      timeline: { date_histogram: { field: '@timestamp', fixed_interval: TIMELINE_BUCKET(ctx.range || '24H') } },
+    },
+  };
+  let live;
+  try { live = await rawSearch(baseUrl, 'anomalies', body, signal); }
+  catch (_e) { return null; }
+  const total = live.hits?.total?.value ?? 0;
+  if (!total) return null;
+  const base = await loadMock('anomaly-detect', ctx);
+  const a = live.aggregations || {};
+  const sevCounts = {};
+  for (const b of a.severity?.buckets || []) sevCounts[b.key] = b.doc_count;
+  base.metrics = base.metrics || {};
+  base.metrics.total    = { value: total, formatted: total.toLocaleString('en-US'), hint: 'live · xerj' };
+  base.metrics.critical = { value: sevCounts.critical || 0, formatted: String(sevCounts.critical || 0), hint: 'live · xerj' };
+  base.metrics.warning  = { value: sevCounts.warning  || 0, formatted: String(sevCounts.warning  || 0), hint: 'live · xerj' };
+  base.byKind     = (a.kinds?.buckets    || []).map((b) => ({ key: b.key, value: b.doc_count }));
+  base.byService  = (a.services?.buckets || []).map((b) => ({ key: b.key, value: b.doc_count }));
+  base.bySeverity = (a.severity?.buckets || []).map((b) => ({ key: b.key, value: b.doc_count }));
+  const tl = a.timeline?.buckets || [];
+  if (tl.length) {
+    base.series = base.series || {};
+    base.series.events = tl.map((b) => b.doc_count);
+  }
+  base._live = { source: 'anomalies', total };
+  return base;
+}
+
+// ── ingest-pipeline ────────────────────────────────────────────────
+async function liveIngestPipeline(baseUrl, ctx, signal) {
+  const since = rangeToSince(ctx.range || '24H');
+  const body = {
+    size: AGG_BYPASS_SIZE,  // rc.1 agg-cap workaround; see header
+    query: { range: { '@timestamp': { gte: since } } },
+    aggs: {
+      stages:    { terms: { field: 'stage', size: 8 } },
+      pipelines: { terms: { field: 'pipeline', size: 8 } },
+      status:    { terms: { field: 'status', size: 4 } },
+      total_docs:{ sum: { field: 'docs' } },
+      avg_dur:   { avg: { field: 'duration_ms' } },
+      timeline:  { date_histogram: { field: '@timestamp', fixed_interval: TIMELINE_BUCKET(ctx.range || '24H') } },
+    },
+  };
+  let live;
+  try { live = await rawSearch(baseUrl, 'logs-ingest-events', body, signal); }
+  catch (_e) { return null; }
+  const total = live.hits?.total?.value ?? 0;
+  if (!total) return null;
+  const base = await loadMock('ingest-pipeline', ctx);
+  const a = live.aggregations || {};
+  const statusCount = {};
+  for (const b of a.status?.buckets || []) statusCount[b.key] = b.doc_count;
+  const errRate = total ? ((statusCount.failed || 0) * 100 / total) : 0;
+  base.metrics = base.metrics || {};
+  base.metrics.events     = { value: total, formatted: total.toLocaleString('en-US'), hint: 'live · xerj' };
+  base.metrics.docs       = { value: a.total_docs?.value || 0,
+                              formatted: ((a.total_docs?.value || 0) / 1e6).toFixed(1) + 'M', hint: 'live · xerj' };
+  base.metrics.errorRate  = { value: errRate, formatted: errRate.toFixed(2) + '%', hint: 'live · xerj' };
+  base.metrics.avgLatency = { value: a.avg_dur?.value || 0,
+                              formatted: Math.round(a.avg_dur?.value || 0) + 'ms', hint: 'live · xerj' };
+  base.byStage    = (a.stages?.buckets    || []).map((b) => ({ key: b.key, value: b.doc_count }));
+  base.byPipeline = (a.pipelines?.buckets || []).map((b) => ({ key: b.key, value: b.doc_count }));
+  base.byStatus   = (a.status?.buckets    || []).map((b) => ({ key: b.key, value: b.doc_count }));
+  const tl = a.timeline?.buckets || [];
+  if (tl.length) {
+    base.series = base.series || {};
+    base.series.events = tl.map((b) => b.doc_count);
+  }
+  base._live = { source: 'logs-ingest-events', total };
+  return base;
+}
