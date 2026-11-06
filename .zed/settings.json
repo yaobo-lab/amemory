@@ -1,7 +1,28 @@
 {
     "context_servers": {
         "amemory": {
-            "url": "http://127.0.0.1:8000/mcp"
-        }
-    }
+            "url": "http://127.0.0.1:8000/mcp",
+        },
+    },
+    "languages": {
+        "TOML": {
+            "enable_language_server": false,
+            "language_servers": [
+                "!taplo",
+                "!crates-lsp",
+                "!dependi",
+                "!cargo-appraiser",
+                "!tombi",
+            ],
+        },
+    },
+    "lsp": {
+        "taplo": {
+            "initialization_options": {
+                "schema": {
+                    "enabled": false,
+                },
+            },
+        },
+    },
 }
