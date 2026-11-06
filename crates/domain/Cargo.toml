@@ -1,5 +1,5 @@
 [package]
-name = "amemory-domain"
+name = "domain"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

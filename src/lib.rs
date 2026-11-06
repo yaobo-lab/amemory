@@ -4,15 +4,15 @@ pub mod config;
 
 use std::sync::Arc;
 
-use amemory_adapter::{SearchStore, XerjAdapter};
-use amemory_domain::book::BookCatalog;
-use amemory_domain::memory::IndexTarget;
-use amemory_domain::skill::SkillCatalog;
-use amemory_mcp::{
-    AmemoryToolProvider, HttpMcpConfig, UnifiedMcpServer, XerjToolProvider, serve_http, serve_stdio,
-};
+use adapter::{SearchStore, XerjAdapter};
+use domain::book::BookCatalog;
+use domain::memory::IndexTarget;
+use domain::skill::SkillCatalog;
 use eyre::{Result, WrapErr};
 use tracing::info;
+use xcat_mcp::{
+    AmemoryToolProvider, HttpMcpConfig, UnifiedMcpServer, XerjToolProvider, serve_http, serve_stdio,
+};
 
 pub use config::{
     AppConfig, DocumentImportConfig, ServerConfig, ServerMode, StorageConfig, XerjSectionConfig,
@@ -130,11 +130,7 @@ async fn run_mcp_stdio(
         .xerj
         .external_es_url
         .as_deref()
-        .or_else(|| {
-            loopback
-                .as_ref()
-                .map(amemory_adapter::LoopbackEsServer::base_url)
-        })
+        .or_else(|| loopback.as_ref().map(adapter::LoopbackEsServer::base_url))
         .unwrap_or("http://127.0.0.1:9200");
 
     let unified = build_unified_mcp(
@@ -176,11 +172,7 @@ async fn run_mcp_http(
         .xerj
         .external_es_url
         .as_deref()
-        .or_else(|| {
-            loopback
-                .as_ref()
-                .map(amemory_adapter::LoopbackEsServer::base_url)
-        })
+        .or_else(|| loopback.as_ref().map(adapter::LoopbackEsServer::base_url))
         .unwrap_or("http://127.0.0.1:9200");
 
     let unified = build_unified_mcp(
@@ -297,9 +289,9 @@ fn build_http_mcp_config(config: &AppConfig) -> Result<HttpMcpConfig> {
 
 #[cfg(test)]
 mod tests {
-    use amemory_domain::book::{BookFileInput, CreateBookInput};
-    use amemory_domain::memory::{SearchMode, SearchRequest};
-    use amemory_domain::skill::CreateSkillInput;
+    use domain::book::{BookFileInput, CreateBookInput};
+    use domain::memory::{SearchMode, SearchRequest};
+    use domain::skill::CreateSkillInput;
     use tempfile::TempDir;
 
     use super::*;

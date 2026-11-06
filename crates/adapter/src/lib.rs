@@ -12,8 +12,8 @@ pub mod search;
 
 use std::future::Future;
 
-use amemory_domain::DomainError;
-use amemory_domain::memory::{
+use domain::DomainError;
+use domain::memory::{
     IndexDocument, IndexMutation, IndexTarget, MemoryChunkInput, SearchHit, SearchRequest,
     StoreStats, SyncReport,
 };
@@ -87,8 +87,8 @@ pub trait SearchStore: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use amemory_domain::memory::{SearchMode, split_text_into_parts};
-    use amemory_domain::skill::{CreateSkillInput, SkillCatalog, SkillFileInput};
+    use domain::memory::{SearchMode, split_text_into_parts};
+    use domain::skill::{CreateSkillInput, SkillCatalog, SkillFileInput};
     use tempfile::TempDir;
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

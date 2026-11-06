@@ -3,7 +3,7 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use amemory_adapter::SearchStore;
+use adapter::SearchStore;
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
 use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;

@@ -1,24 +1,24 @@
 [package]
-name = "amemory"
+name = "xcat"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "Amemory + XERJ unified knowledge, memory, and MCP server"
+description = "xcat + XERJ unified knowledge, memory, and MCP server"
 
 [lib]
-name = "amemory"
+name = "xcat"
 path = "src/lib.rs"
 
 [[bin]]
-name = "amemory"
+name = "xcat"
 path = "src/main.rs"
 
 [dependencies]
-amemory-adapter = { path = "crates/adapter" }
-amemory-domain = { path = "crates/domain" }
-amemory-mcp = { path = "crates/mcp" }
+adapter = { path = "crates/adapter" }
+domain = { path = "crates/domain" }
+xcat-mcp = { path = "crates/mcp" }
 color-eyre.workspace = true
 eyre.workspace = true
 serde.workspace = true
@@ -35,11 +35,7 @@ workspace = true
 
 [workspace]
 resolver = "2"
-members = [
-    "crates/domain",
-    "crates/mcp",
-    "crates/adapter",
-]
+members = ["crates/domain", "crates/mcp", "crates/adapter"]
 exclude = ["crates/xerj", "crates/xerj/engine"]
 
 [workspace.package]
@@ -47,7 +43,7 @@ version = "0.2.0"
 edition = "2024"
 rust-version = "1.88"
 license = "Apache-2.0"
-authors = ["Amemory Contributors"]
+authors = ["xcat Contributors"]
 
 [workspace.dependencies]
 axum = { version = "0.7", features = ["macros"] }
@@ -72,6 +68,7 @@ tower-http = { version = "0.5", features = ["limit"] }
 tracing = "0.1"
 
 [workspace.lints.rust]
+linker_messages = "allow"
 missing_docs = "warn"
 unsafe_op_in_unsafe_fn = "deny"
 

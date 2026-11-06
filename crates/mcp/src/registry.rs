@@ -2,7 +2,7 @@
 
 use std::collections::BTreeSet;
 
-use amemory_adapter::SearchStore;
+use adapter::SearchStore;
 use rmcp::ErrorData as McpError;
 use rmcp::RoleServer;
 use rmcp::ServerHandler;

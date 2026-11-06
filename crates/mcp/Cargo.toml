@@ -1,5 +1,5 @@
 [package]
-name = "amemory-mcp"
+name = "xcat-mcp"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -7,8 +7,8 @@ authors.workspace = true
 description = "Unified MCP facade combining Amemory Skill/Book/Memory tools and native XERJ MCP tools"
 
 [dependencies]
-amemory-adapter = { path = "../adapter" }
-amemory-domain = { path = "../domain" }
+adapter = { path = "../adapter" }
+domain = { path = "../domain" }
 axum.workspace = true
 rmcp.workspace = true
 schemars.workspace = true

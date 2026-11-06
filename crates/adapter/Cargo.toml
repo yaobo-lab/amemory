@@ -1,5 +1,5 @@
 [package]
-name = "amemory-adapter"
+name = "adapter"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -7,7 +7,7 @@ authors.workspace = true
 description = "XERJ Engine and API isolation adapter for Amemory"
 
 [dependencies]
-amemory-domain = { path = "../domain" }
+domain = { path = "../domain" }
 axum.workspace = true
 serde.workspace = true
 serde_json.workspace = true

@@ -5,7 +5,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use amemory_domain::memory::{
+use domain::memory::{
     IndexDocument, IndexMutation, IndexTarget, SyncReport, book_document_doc_prefix,
 };
 use serde::{Deserialize, Serialize};

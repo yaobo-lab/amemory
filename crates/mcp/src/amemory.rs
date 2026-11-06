@@ -4,16 +4,16 @@ use std::fmt::Write as _;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use amemory_adapter::{AdapterError, SearchStore};
-use amemory_domain::DomainError;
-use amemory_domain::book::{
+use adapter::{AdapterError, SearchStore};
+use domain::DomainError;
+use domain::book::{
     BookCatalog, BookFileInput, BookFileUpdatePolicy, CreateBookInput, ImportBookDocumentInput,
     UpdateBookInput,
 };
-use amemory_domain::memory::{
+use domain::memory::{
     DEFAULT_MEMORY_NAMESPACE, IndexTarget, MemoryChunkInput, SearchMode, SearchRequest,
 };
-use amemory_domain::skill::{
+use domain::skill::{
     CreateSkillInput, SkillCatalog, SkillFileInput, SkillFileUpdatePolicy, UpdateSkillInput,
 };
 use rmcp::ErrorData as McpError;

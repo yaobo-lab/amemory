@@ -1,6 +1,6 @@
 //! Search query translation and hit normalization over XERJ indices.
 
-use amemory_domain::memory::{SearchHit, SearchMode, SearchRequest};
+use domain::memory::{SearchHit, SearchMode, SearchRequest};
 use serde_json::{Value, json};
 use xerj_engine::Engine;
 use xerj_query::parse_request;

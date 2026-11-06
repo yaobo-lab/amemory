@@ -39,9 +39,9 @@ mod tests {
     use std::borrow::Cow;
     use std::sync::Arc;
 
-    use amemory_adapter::{XerjAdapter, XerjConfig};
-    use amemory_domain::book::BookCatalog;
-    use amemory_domain::skill::{CreateSkillInput, SkillCatalog};
+    use adapter::{XerjAdapter, XerjConfig};
+    use domain::book::BookCatalog;
+    use domain::skill::{CreateSkillInput, SkillCatalog};
     use rmcp::model::{JsonObject, Tool};
     use serde_json::json;
     use tempfile::TempDir;

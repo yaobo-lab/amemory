@@ -1,8 +1,8 @@
 //! Binary entry point (`amemory`) acting as the pure composition root.
 
-use amemory::{AppConfig, run};
 use eyre::{Result, eyre};
 use toolkit_rs::{logger, painc::set_panic_handler};
+use xcat::{AppConfig, run};
 
 #[tokio::main]
 async fn main() -> Result<()> {

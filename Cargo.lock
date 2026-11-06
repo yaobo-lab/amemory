@@ -3,6 +3,25 @@
 version = 4
 
 [[package]]
+name = "adapter"
+version = "0.2.0"
+dependencies = [
+ "axum",
+ "domain",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "xerj-api",
+ "xerj-common",
+ "xerj-engine",
+ "xerj-query",
+ "xerj-server",
+]
+
+[[package]]
 name = "addr2line"
 version = "0.25.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -69,78 +88,6 @@ name = "allocator-api2"
 version = "0.2.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
-
-[[package]]
-name = "amemory"
-version = "0.2.0"
-dependencies = [
- "amemory-adapter",
- "amemory-domain",
- "amemory-mcp",
- "color-eyre",
- "eyre",
- "serde",
- "tempfile",
- "tokio",
- "toml 0.8.23",
- "toolkit-rs",
- "tracing",
-]
-
-[[package]]
-name = "amemory-adapter"
-version = "0.2.0"
-dependencies = [
- "amemory-domain",
- "axum",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
- "xerj-api",
- "xerj-common",
- "xerj-engine",
- "xerj-query",
- "xerj-server",
-]
-
-[[package]]
-name = "amemory-domain"
-version = "0.2.0"
-dependencies = [
- "base64 0.23.1",
- "blake3",
- "calamine",
- "chrono",
- "pdf_oxide",
- "quick-xml 0.41.0",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.18",
- "zip",
-]
-
-[[package]]
-name = "amemory-mcp"
-version = "0.2.0"
-dependencies = [
- "amemory-adapter",
- "amemory-domain",
- "axum",
- "rmcp",
- "schemars",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.18",
- "tokio",
- "tower-http 0.5.2",
- "tracing",
- "xerj-mcp",
-]
 
 [[package]]
 name = "android_system_properties"
@@ -1467,6 +1414,23 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.117",
+]
+
+[[package]]
+name = "domain"
+version = "0.2.0"
+dependencies = [
+ "base64 0.23.1",
+ "blake3",
+ "calamine",
+ "chrono",
+ "pdf_oxide",
+ "quick-xml 0.41.0",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "zip",
 ]
 
 [[package]]
@@ -6127,6 +6091,42 @@ checksum = "32e45ad4206f6d2479085147f02bc2ef834ac85886624a23575ae137c8aa8156"
 dependencies = [
  "libc",
  "rustix",
+]
+
+[[package]]
+name = "xcat"
+version = "0.2.0"
+dependencies = [
+ "adapter",
+ "color-eyre",
+ "domain",
+ "eyre",
+ "serde",
+ "tempfile",
+ "tokio",
+ "toml 0.8.23",
+ "toolkit-rs",
+ "tracing",
+ "xcat-mcp",
+]
+
+[[package]]
+name = "xcat-mcp"
+version = "0.2.0"
+dependencies = [
+ "adapter",
+ "axum",
+ "domain",
+ "rmcp",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tower-http 0.5.2",
+ "tracing",
+ "xerj-mcp",
 ]
 
 [[package]]

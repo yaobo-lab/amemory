@@ -4,7 +4,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use amemory_domain::memory::{
+use domain::memory::{
     IndexDocument, IndexMutation, IndexTarget, MemoryChunkInput, SearchHit, SearchRequest,
     StoreStats, SyncReport, build_memory_documents,
 };

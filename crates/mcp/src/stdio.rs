@@ -1,6 +1,6 @@
 //! Stdio transport runner for the unified MCP server.
 
-use amemory_adapter::SearchStore;
+use adapter::SearchStore;
 use rmcp::ServiceExt;
 use rmcp::transport::stdio;
 

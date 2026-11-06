@@ -3,10 +3,7 @@
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 
-use amemory_adapter::{
-    DEFAULT_BOOKS_INDEX, DEFAULT_MEMORY_INDEX, DEFAULT_SKILLS_INDEX, XerjConfig,
-};
-use amemory_mcp::DocumentImportPolicy;
+use adapter::{DEFAULT_BOOKS_INDEX, DEFAULT_MEMORY_INDEX, DEFAULT_SKILLS_INDEX, XerjConfig};
 use eyre::{Result, bail, eyre};
 use serde::{Deserialize, Serialize};
 use toolkit_rs::{
@@ -14,6 +11,7 @@ use toolkit_rs::{
     logger::{LogConfig, LogStyle, string_to_level},
     painc::PaincConf,
 };
+use xcat_mcp::DocumentImportPolicy;
 
 /// Default configuration file path relative to the workspace root.
 pub const DEFAULT_CONFIG_PATH: &str = "etc/config.toml";
@@ -99,7 +97,7 @@ impl AppConfig {
         Ok(())
     }
 
-    /// Build the [`XerjConfig`] consumed by [`amemory_adapter::XerjAdapter`].
+    /// Build the [`XerjConfig`] consumed by [`adapter::XerjAdapter`].
     #[must_use]
     pub fn to_xerj_config(&self) -> XerjConfig {
         XerjConfig {
@@ -134,7 +132,7 @@ impl AppConfig {
             })
     }
 
-    /// Build the [`DocumentImportPolicy`] consumed by [`amemory_mcp::AmemoryToolProvider`].
+    /// Build the [`DocumentImportPolicy`] consumed by [`xcat_mcp::AmemoryToolProvider`].
     #[must_use]
     pub fn to_import_policy(&self) -> DocumentImportPolicy {
         DocumentImportPolicy {

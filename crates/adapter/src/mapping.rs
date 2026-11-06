@@ -1,6 +1,6 @@
 //! Explicit XERJ index schema and document source mapping for Amemory indices.
 
-use amemory_domain::memory::{IndexDocument, IndexTarget};
+use domain::memory::{IndexDocument, IndexTarget};
 use serde_json::{Map, Value};
 use xerj_common::types::{EmbeddingConfig, FieldConfig, FieldOptions, FieldType, Schema};
 
