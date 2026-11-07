@@ -1,4 +1,22 @@
-﻿//! Static assets: font glyphs, icons, and image definitions.
+//! Static assets: font glyphs, icons, and image definitions.
+
+use std::sync::OnceLock;
+use base64::prelude::*;
+
+/// Embedded PNG bytes of the application logo without text.
+pub const LOGO_NOTEXT_PNG_BYTES: &[u8] = include_bytes!("../../assets/LOGO_notext.png");
+
+/// Embedded ICO bytes of the application icon.
+pub const LOGO_NOTEXT_ICO_BYTES: &[u8] = include_bytes!("../../assets/LOGO_notext.ico");
+
+/// Base64 data URI of the logo for NSH image element rendering.
+#[must_use]
+pub fn logo_notext_data_uri() -> &'static str {
+    static URI: OnceLock<String> = OnceLock::new();
+    URI.get_or_init(|| {
+        format!("data:image/png;base64,{}", BASE64_STANDARD.encode(LOGO_NOTEXT_PNG_BYTES))
+    })
+}
 
 /// Common icon glyph unicode characters defined in iconfont.ttf.
 pub mod glyphs {

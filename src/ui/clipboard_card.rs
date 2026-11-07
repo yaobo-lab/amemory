@@ -10,6 +10,7 @@ use crate::core::search::highlight_text;
 use crate::core::types::{ItemKind, KnowledgeItem};
 
 /// Render single knowledge/memory item card.
+#[allow(clippy::needless_pass_by_value)]
 pub fn knowledge_card_view(
     item: KnowledgeItem,
     is_selected: bool,
@@ -26,6 +27,8 @@ pub fn knowledge_card_view(
     let on_edit = std::sync::Arc::new(on_edit);
     let on_fav = std::sync::Arc::new(on_fav);
     let on_delete = std::sync::Arc::new(on_delete);
+
+    let is_fav = item.favorite;
 
     let surface = theme.surface;
     let divider = theme.divider;
@@ -117,11 +120,9 @@ pub fn knowledge_card_view(
                                 .text_xs(),
                         )
                         .child(
-                            if let Some(s) = item.score {
+                            item.score.map_or_else(view, |s| {
                                 view().child(text(format!("{s:.1}")).text_color(accent).text_xs())
-                            } else {
-                                view()
-                            },
+                            }),
                         ),
                 )
                 // Middle row: Preview snippet with keyword highlight
@@ -181,7 +182,7 @@ pub fn knowledge_card_view(
                     let c_fav = on_fav.clone();
                     let c_del = on_delete.clone();
                     hover_toolbar_view(
-                        item.clone(),
+                        is_fav,
                         theme,
                         move || c_copy(),
                         move || c_edit(),

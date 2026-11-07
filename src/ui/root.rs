@@ -18,7 +18,6 @@ use super::theme::ClippiTheme;
 use super::titlebar::titlebar_view;
 use super::type_filter_config::type_filter_config_view;
 
-use crate::core::settings::ThemeMode;
 use crate::core::types::KnowledgeItem;
 use crate::state::app::{ActiveView, AppStore};
 
@@ -49,18 +48,15 @@ pub fn root_view(
     let show_tag_filter = signal(false);
     let tag_picking_item: Signal<Option<KnowledgeItem>> = signal(None);
 
-    let get_theme = move || match store.settings.get().theme_mode {
-        ThemeMode::Light => ClippiTheme::light(),
-        ThemeMode::Dark | ThemeMode::System => ClippiTheme::dark(),
-    };
+    let get_theme = move || ClippiTheme::resolve(store.settings.get().theme_mode);
 
     let theme = get_theme();
     let panel_bg = theme.panel_bg;
 
     let sync_for_title = on_trigger_sync.clone();
-    let delete_for_list = on_delete_item.clone();
+    let delete_for_list = on_delete_item;
     let save_for_edit = on_save_item.clone();
-    let save_for_picker = on_save_item.clone();
+    let save_for_picker = on_save_item;
 
     view()
         .w_full()
@@ -81,7 +77,7 @@ pub fn root_view(
                     when(
                         move || matches!(active_view.get(), ActiveView::ClipboardList),
                         {
-                            let del_cb = delete_for_list.clone();
+                            let del_cb = delete_for_list;
                             move || {
                                 let del_cb2 = del_cb.clone();
                                 view()
@@ -132,9 +128,9 @@ pub fn root_view(
                                         },
                                         // on_delete
                                         {
-                                            let del_cb3 = del_cb2.clone();
+                                            let del_cb3 = del_cb2;
                                             move |item| {
-                                                let delete_id = item.id.clone();
+                                                let delete_id = item.id;
                                                 let del_run = del_cb3.clone();
                                                 store.show_confirm_dialog(
                                                     "删除知识项",
@@ -168,7 +164,7 @@ pub fn root_view(
                     when(
                         move || matches!(active_view.get(), ActiveView::Edit),
                         {
-                            let save_cb = save_for_edit.clone();
+                            let save_cb = save_for_edit;
                             move || {
                                 let save_cb2 = save_cb.clone();
                                 edit_panel_view(
@@ -191,10 +187,10 @@ pub fn root_view(
                     when(
                         move || matches!(active_view.get(), ActiveView::Settings(_)),
                         {
-                            let c = on_check_update.clone();
-                            let d = on_start_download.clone();
-                            let r = on_restart_update.clone();
-                            let b = on_rebuild_index.clone();
+                            let c = on_check_update;
+                            let d = on_start_download;
+                            let r = on_restart_update;
+                            let b = on_rebuild_index;
                             move || {
                                 let c2 = c.clone();
                                 let d2 = d.clone();
@@ -249,7 +245,7 @@ pub fn root_view(
             when(
                 move || tag_picking_item.get().is_some(),
                 {
-                    let save_picker = save_for_picker.clone();
+                    let save_picker = save_for_picker;
                     move || {
                         let item = tag_picking_item.get().unwrap_or_default();
                         let save_picker2 = save_picker.clone();

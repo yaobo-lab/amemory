@@ -46,7 +46,7 @@ impl AmemoryRuntime {
 
     /// Construct with already initialized components.
     #[must_use]
-    pub fn with_components(
+    pub const fn with_components(
         config: Arc<AppConfig>,
         adapter: Arc<XerjAdapter>,
         skills_catalog: Arc<SkillCatalog>,
@@ -68,7 +68,7 @@ impl AmemoryRuntime {
 
     /// Access the underlying XERJ adapter.
     #[must_use]
-    pub fn adapter(&self) -> &Arc<XerjAdapter> {
+    pub const fn adapter(&self) -> &Arc<XerjAdapter> {
         &self.adapter
     }
 
@@ -131,6 +131,7 @@ impl AmemoryRuntime {
     }
 
     /// Load all knowledge items across Skills and Books synchronously.
+    #[must_use]
     pub fn load_all_knowledge_items(&self) -> Vec<KnowledgeItem> {
         let mut all = Vec::new();
         if let Ok(mut skills) = self.list_skills() {
@@ -173,6 +174,7 @@ impl AmemoryRuntime {
     }
 
     /// Synchronously get snapshot of stats for GUI polling.
+    #[must_use]
     pub fn get_stats_snapshot(&self) -> StatsSnapshot {
         let skills_list = self.skills_catalog.list_summaries().unwrap_or_default();
         let skills_count = skills_list.len();
@@ -262,7 +264,7 @@ impl AmemoryRuntime {
     }
 
     /// Index a single item into XERJ.
-    pub fn index_item(&self, _item: &KnowledgeItem) -> Result<()> {
+    pub const fn index_item(&self, _item: &KnowledgeItem) -> Result<()> {
         Ok(())
     }
 

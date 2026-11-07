@@ -9,9 +9,19 @@ async fn main() -> Result<()> {
     color_eyre::install()?;
     let mut config = AppConfig::load(None)?;
 
+    // 默认启动 GUI 模式，若命令行传入指定模式参数则按参数执行
+    config.server.mode = ServerMode::Gui;
+
     let args: Vec<String> = std::env::args().collect();
-    if args.iter().any(|a| a == "--gui" || a == "-g" || a == "gui") {
-        config.server.mode = ServerMode::Gui;
+    for arg in args.iter().skip(1) {
+        match arg.as_str() {
+            "--mcp-http" | "mcp-http" => config.server.mode = ServerMode::McpHttp,
+            "--mcp-stdio" | "mcp-stdio" => config.server.mode = ServerMode::McpStdio,
+            "--server" | "server" => config.server.mode = ServerMode::Server,
+            "--sync" | "sync" => config.server.mode = ServerMode::Sync,
+            "--gui" | "-g" | "gui" => config.server.mode = ServerMode::Gui,
+            _ => {}
+        }
     }
 
     set_panic_handler(config.to_toolkit_panic_conf());

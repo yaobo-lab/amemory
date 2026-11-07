@@ -11,7 +11,7 @@ pub fn position_window(mode: WindowPositionMode, width: f32, height: f32) {
     let (screen_w, screen_h) = get_screen_size();
 
     match mode {
-        WindowPositionMode::Center => {
+        WindowPositionMode::Center | WindowPositionMode::Remember => {
             let x = ((screen_w - width) / 2.0).max(0.0);
             let y = ((screen_h - height) / 2.0).max(0.0);
             set_frame(WindowFrame {
@@ -26,17 +26,6 @@ pub fn position_window(mode: WindowPositionMode, width: f32, height: f32) {
             let (mouse_x, mouse_y) = get_cursor_pos();
             let x = (mouse_x - width / 2.0).clamp(0.0, screen_w - width);
             let y = (mouse_y - 20.0).clamp(0.0, screen_h - height);
-            set_frame(WindowFrame {
-                x: Some(Points(x)),
-                y: Some(Points(y)),
-                width: Some(Points(width)),
-                height: Some(Points(height)),
-                animated: Some(false),
-            });
-        }
-        WindowPositionMode::Remember => {
-            let x = ((screen_w - width) / 2.0).max(0.0);
-            let y = ((screen_h - height) / 2.0).max(0.0);
             set_frame(WindowFrame {
                 x: Some(Points(x)),
                 y: Some(Points(y)),
@@ -67,7 +56,7 @@ fn get_cursor_pos() -> (f32, f32) {
         use windows_sys::Win32::Foundation::POINT;
         use windows_sys::Win32::UI::WindowsAndMessaging::GetCursorPos;
         let mut pt = POINT { x: 0, y: 0 };
-        if GetCursorPos(&mut pt) != 0 {
+        if GetCursorPos(&raw mut pt) != 0 {
             return (pt.x as f32, pt.y as f32);
         }
     }

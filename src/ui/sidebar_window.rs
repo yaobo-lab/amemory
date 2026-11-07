@@ -20,6 +20,7 @@ pub struct SidebarWindowState {
 
 impl SidebarWindowState {
     /// Calculate attached sidebar position from main window coordinates.
+    #[must_use]
     pub fn for_main_window(main_x: f32, main_y: f32, main_h: f32) -> Self {
         let (x, y, width, height) = calculate_sidebar_bounds(main_x, main_y, DEFAULT_WINDOW_W, main_h);
         Self {

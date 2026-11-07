@@ -1,4 +1,4 @@
-﻿//! Dual-row 22px Filter chips and SearchMode selectors matching Clippi 1:1.
+//! Dual-row 22px Filter chips and `SearchMode` selectors matching Clippi 1:1.
 
 use nsh_core::prelude::*;
 
@@ -144,19 +144,25 @@ pub fn filter_bar_view(
         )
 }
 
+#[allow(clippy::large_types_passed_by_value)]
 fn render_mode_chip(
     mode: SearchMode,
     label: &'static str,
     filters: Signal<crate::core::filters::FilterCriteria>,
     theme: ClippiTheme,
 ) -> impl IntoElement {
+    let accent_soft = theme.accent_soft;
+    let surface = theme.surface;
+    let accent = theme.accent;
+    let divider = theme.divider;
+
     view()
         .h(px(18.0))
         .px(px(6.0))
         .rounded(px(4.0))
-        .bg(move || if filters.get().search_mode == mode { theme.accent_soft } else { theme.surface })
+        .bg(move || if filters.get().search_mode == mode { accent_soft } else { surface })
         .border(px(1.0))
-        .border_color(move || if filters.get().search_mode == mode { theme.accent } else { theme.divider })
+        .border_color(move || if filters.get().search_mode == mode { accent } else { divider })
         .items_center()
         .justify_center()
         .cursor_pointer()

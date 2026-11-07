@@ -1,5 +1,15 @@
 //! Application startup, catalog synchronization, and runtime mode orchestration for Amemory.
 
+#![allow(
+    clippy::too_many_lines,
+    clippy::too_many_arguments,
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::unreadable_literal,
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+)]
+
 pub mod config;
 pub mod core;
 pub mod platform;
@@ -114,7 +124,7 @@ pub async fn run(config: AppConfig) -> Result<()> {
                 Arc::new(books_catalog),
             ));
             let mut mcp_handle = services::mcp_controller::McpController::new();
-            let _ = mcp_handle.start(rt.clone());
+            let _ = mcp_handle.start(&rt);
             ui::run_gui(rt, config.clone());
             mcp_handle.stop();
             Ok(())

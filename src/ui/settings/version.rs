@@ -6,6 +6,7 @@ use super::{setting_row, settings_group};
 use crate::core::i18n_keys::I18nKey;
 use crate::services::update::UpdatePhase;
 use crate::state::app::AppStore;
+use crate::ui::assets::logo_notext_data_uri;
 use crate::ui::theme::ClippiTheme;
 
 /// Render Tab 6: About & version update with progress bar.
@@ -57,9 +58,13 @@ pub fn render_version_tab(
                                 .flex_row()
                                 .items_center()
                                 .gap(px(6.0))
-                                .child(text("🧠").text_sm())
                                 .child(
-                                    text(format!("amemory v{}", current_version))
+                                    image(logo_notext_data_uri())
+                                        .size(px(24.0))
+                                        .rounded(px(5.0)),
+                                )
+                                .child(
+                                    text(format!("amemory v{current_version}"))
                                         .text_color(text_1)
                                         .font_weight(FontWeight::BOLD)
                                         .text_xs(),
@@ -85,7 +90,7 @@ pub fn render_version_tab(
                         UpdatePhase::Verifying => "正在进行 SHA256 完整性校验...".to_string(),
                         UpdatePhase::Installing => "正在准备安装更新...".to_string(),
                         UpdatePhase::ReadyToRestart => "新版本已就绪，点击重启应用即可完成升级".to_string(),
-                        UpdatePhase::Error(e) => format!("检查或更新失败: {}", e),
+                        UpdatePhase::Error(e) => format!("检查或更新失败: {e}"),
                     })
                     .text_color(move || match phase.get() {
                         UpdatePhase::Error(_) => danger,
@@ -157,17 +162,15 @@ pub fn render_version_tab(
                                 })
                                 .cursor_pointer()
                                 .on_press(move || match phase.get() {
-                                    UpdatePhase::Idle | UpdatePhase::UpToDate => on_check_update(),
+                                    UpdatePhase::Idle | UpdatePhase::UpToDate | UpdatePhase::Error(_) => on_check_update(),
                                     UpdatePhase::Available(_) => on_start_download(),
                                     UpdatePhase::ReadyToRestart => on_restart_update(),
-                                    UpdatePhase::Error(_) => on_check_update(),
                                     _ => {}
                                 })
                                 .child(
                                     text(move || match phase.get() {
-                                        UpdatePhase::Idle => "检查更新".to_string(),
+                                        UpdatePhase::Idle | UpdatePhase::UpToDate => "检查更新".to_string(),
                                         UpdatePhase::Checking => "正在检查...".to_string(),
-                                        UpdatePhase::UpToDate => "检查更新".to_string(),
                                         UpdatePhase::Available(_) | UpdatePhase::UpdateAvailable => "立即更新".to_string(),
                                         UpdatePhase::Downloading { .. } => "下载中...".to_string(),
                                         UpdatePhase::Verifying => "校验中...".to_string(),
@@ -196,7 +199,7 @@ pub fn render_version_tab(
                                 .rounded(px(4.0))
                                 .bg(divider)
                                 .child(
-                                    text(format!("更新说明:\n{}", note))
+                                    text(format!("更新说明:\n{note}"))
                                         .text_color(text_2)
                                         .text_xs(),
                                 )

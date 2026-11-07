@@ -12,6 +12,7 @@ use crate::services::update::{UpdateInfo, UpdatePhase};
 
 /// Primary views in the single-window interface.
 #[derive(Debug, Clone, PartialEq)]
+#[allow(clippy::large_enum_variant)]
 pub enum ActiveView {
     /// Knowledge card list view.
     ClipboardList,
@@ -41,7 +42,7 @@ impl std::fmt::Debug for ConfirmDialogData {
         f.debug_struct("ConfirmDialogData")
             .field("title", &self.title)
             .field("message", &self.message)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -52,7 +53,7 @@ impl PartialEq for ConfirmDialogData {
 }
 
 /// Floating Toast notification.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToastNotification {
     /// Notification ID.
     pub id: u64,

@@ -16,7 +16,7 @@ pub fn tag_filter_view(
     let on_close = std::sync::Arc::new(on_close);
     let close_btn1 = on_close.clone();
     let close_btn2 = on_close.clone();
-    let close_overlay = on_close.clone();
+    let close_overlay = on_close;
     let card_bg = theme.card_bg;
     let divider = theme.divider;
     let text_1 = theme.text_1;
@@ -42,7 +42,6 @@ pub fn tag_filter_view(
     all_tags.insert("mcp".to_string());
     all_tags.insert("xerj".to_string());
 
-    let tags_vec: Vec<String> = all_tags.into_iter().collect();
     let new_tag_name = signal(String::new());
 
     modal_overlay_view(
@@ -136,7 +135,7 @@ pub fn tag_filter_view(
                             .flex_row()
                             .flex_wrap()
                             .gap(px(6.0))
-                            .children(tags_vec.into_iter().map(|tag| {
+                            .children(all_tags.into_iter().map(|tag| {
                                 let tag_bg = tag.clone();
                                 let tag_tx = tag.clone();
                                 let tag_click = tag.clone();
@@ -156,7 +155,7 @@ pub fn tag_filter_view(
                                         });
                                     })
                                     .child(
-                                        text(format!("#{}", tag))
+                                        text(format!("#{tag}"))
                                             .text_color(move || if filters.get().tags.contains(&tag_tx) { rgb(0xffffff) } else { text_2 })
                                             .text_xs(),
                                     )

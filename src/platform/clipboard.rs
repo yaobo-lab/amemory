@@ -2,7 +2,7 @@
 
 use nsh_core::element::set_clipboard;
 
-/// Standard Windows clipboard format for Unicode text (CF_UNICODETEXT = 13).
+/// Standard Windows clipboard format for Unicode text (`CF_UNICODETEXT` = 13).
 #[cfg(target_os = "windows")]
 const CF_UNICODETEXT: u32 = 13;
 

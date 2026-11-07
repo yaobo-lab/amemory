@@ -41,8 +41,8 @@ pub async fn download_file(
         file.write_all(&chunk)
             .map_err(|e| format!("{}: {e}", I18nKey::UpdateErrInstall.text()))?;
         downloaded += chunk.len() as u64;
-        if total_size > 0 {
-            let pct = ((downloaded * 100) / total_size).min(100) as u8;
+        if let Some(pct) = (downloaded * 100).checked_div(total_size) {
+            let pct = pct.min(100) as u8;
             if pct != last_pct {
                 last_pct = pct;
                 on_progress(pct);

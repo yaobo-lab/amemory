@@ -19,7 +19,7 @@ pub fn tag_picker_view(
     let on_close = std::sync::Arc::new(on_close);
     let close_btn1 = on_close.clone();
     let close_btn2 = on_close.clone();
-    let close_overlay = on_close.clone();
+    let close_overlay = on_close;
     let on_updated = std::sync::Arc::new(on_updated);
     let card_bg = theme.card_bg;
     let divider = theme.divider;
@@ -148,7 +148,7 @@ pub fn tag_picker_view(
                                         });
                                     })
                                     .child(
-                                        text(format!("#{}", preset_str))
+                                        text(format!("#{preset_str}"))
                                             .text_color(move || if item_tags.get().contains(&preset_tc) { rgb(0xffffff) } else { text_2 })
                                             .text_xs(),
                                     )

@@ -120,9 +120,11 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::single_range_in_vec_init)]
     fn replace_all_rewrites_matches() {
         assert_eq!(replace_all("one_two_three", "_", " "), ("one two three".into(), 2, Some(3)));
         assert_eq!(index_at_or_after(&[0..1, 4..5], 2), 1);
-        assert_eq!(index_at_or_after(&[0..1], 9), 0);
+        let single = [0..1];
+        assert_eq!(index_at_or_after(&single, 9), 0);
     }
 }

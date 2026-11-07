@@ -6,6 +6,7 @@ use super::theme::ClippiTheme;
 use crate::state::app::AppStore;
 
 /// Render 56px left tag sidebar view.
+#[must_use]
 pub fn sidebar_view(store: AppStore, theme: ClippiTheme) -> impl IntoElement {
     let surface = theme.surface;
     let divider = theme.divider;

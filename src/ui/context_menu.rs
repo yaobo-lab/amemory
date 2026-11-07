@@ -1,4 +1,4 @@
-﻿//! 184px Right-click context menu matching Clippi 1:1.
+//! 184px Right-click context menu matching Clippi 1:1.
 
 use nsh_core::prelude::*;
 
@@ -19,7 +19,6 @@ pub fn context_menu_box(
     let divider = theme.divider;
     let btn_hover = theme.btn_hover;
     let text_1 = theme.text_1;
-    let _text_3 = theme.text_3;
     let danger = theme.danger;
 
     view()

@@ -5,11 +5,10 @@ use nsh_core::prelude::*;
 
 use super::assets::glyphs;
 use super::theme::ClippiTheme;
-use crate::core::types::KnowledgeItem;
 
 /// Render 20px action tab toolbar for a card.
 pub fn hover_toolbar_view(
-    item: KnowledgeItem,
+    is_favorite: bool,
     theme: ClippiTheme,
     on_copy: impl Fn() + 'static,
     on_edit: impl Fn() + 'static,
@@ -58,7 +57,7 @@ pub fn hover_toolbar_view(
                 glyphs::STAR,
                 surface,
                 fav_color,
-                if item.favorite { fav_color } else { text_2 },
+                if is_favorite { fav_color } else { text_2 },
                 divider,
                 on_fav,
             ),

@@ -1,10 +1,11 @@
-﻿//! Rich preview renderer for Knowledge Items (Markdown, Code, PlainText).
+//! Rich preview renderer for Knowledge Items (Markdown, Code, `PlainText`).
 
 use nsh_core::prelude::*;
 
 use super::theme::ClippiTheme;
 
 /// Render rich content preview block
+#[must_use]
 pub fn rich_preview_view(
     content: &str,
     theme: ClippiTheme,
@@ -13,7 +14,11 @@ pub fn rich_preview_view(
     let card_bg = theme.card_bg;
     let divider = theme.divider;
 
-    let lines: Vec<String> = content.lines().take(50).map(|s| s.to_string()).collect();
+    let line_elements = content.lines().take(50).map(|line| {
+        text(line.to_string())
+            .text_color(text_1)
+            .text_xs()
+    });
 
     view()
         .w_full()
@@ -32,11 +37,7 @@ pub fn rich_preview_view(
                     view()
                         .flex_col()
                         .gap(px(2.0))
-                        .children(lines.into_iter().map(|line| {
-                            text(line)
-                                .text_color(text_1)
-                                .text_xs()
-                        })),
+                        .children(line_elements),
                 ),
         )
 }

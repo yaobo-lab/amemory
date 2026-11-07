@@ -43,9 +43,8 @@ impl CardHeightMode {
     pub const fn height_px(self) -> f32 {
         match self {
             Self::Compact => 68.0,
-            Self::Standard => 96.0,
+            Self::Standard | Self::Adaptive => 96.0,
             Self::Comfort => 128.0,
-            Self::Adaptive => 96.0,
         }
     }
 }
@@ -65,6 +64,7 @@ pub enum ThemeMode {
 
 /// User GUI configuration.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct GuiSettings {
     /// Theme appearance.
     pub theme_mode: ThemeMode,
@@ -114,8 +114,8 @@ pub struct GuiSettings {
     pub last_pos_y: Option<f32>,
 }
 
-fn default_sound_idx() -> usize { 1 }
-fn default_true() -> bool { true }
+const fn default_sound_idx() -> usize { 1 }
+const fn default_true() -> bool { true }
 fn default_hotkey() -> String { "Alt+Space".to_string() }
 
 impl Default for GuiSettings {
@@ -151,13 +151,11 @@ impl GuiSettings {
     #[must_use]
     pub fn load() -> Self {
         let path = project_root().join(GUI_SETTINGS_FILE);
-        if path.is_file() {
-            if let Ok(content) = fs::read_to_string(&path) {
-                if let Ok(settings) = serde_json::from_str::<Self>(&content) {
+        if path.is_file()
+            && let Ok(content) = fs::read_to_string(&path)
+                && let Ok(settings) = serde_json::from_str::<Self>(&content) {
                     return settings;
                 }
-            }
-        }
         Self::default()
     }
 

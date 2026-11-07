@@ -43,7 +43,7 @@ impl McpController {
     }
 
     /// Start the MCP HTTP server in the background using the runtime's adapter.
-    pub fn start(&mut self, runtime: Arc<AmemoryRuntime>) -> Result<()> {
+    pub fn start(&mut self, runtime: &AmemoryRuntime) -> Result<()> {
         if self.is_running() {
             return Ok(());
         }

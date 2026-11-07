@@ -19,6 +19,7 @@ pub mod version;
 pub const SETTINGS_TAB_COUNT: usize = 6;
 
 /// Reusable settings group container matching Clippi 1:1.
+#[must_use]
 pub fn settings_group(
     title: &'static str,
     theme: ClippiTheme,
@@ -222,7 +223,7 @@ pub fn settings_panel_view(
                                     when(
                                         move || active_tab.get() == 2,
                                         {
-                                            let on_rebuild = on_rebuild_index.clone();
+                                            let on_rebuild = on_rebuild_index;
                                             move || xerj_engine::render_xerj_tab(store, theme, {
                                                 let f = on_rebuild.clone();
                                                 move || f()
@@ -246,9 +247,9 @@ pub fn settings_panel_view(
                                     when(
                                         move || active_tab.get() == 5,
                                         {
-                                            let check = on_check_update.clone();
-                                            let dl = on_start_download.clone();
-                                            let restart = on_restart_update.clone();
+                                            let check = on_check_update;
+                                            let dl = on_start_download;
+                                            let restart = on_restart_update;
                                             move || {
                                                 let c = check.clone();
                                                 let d = dl.clone();

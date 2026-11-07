@@ -5,9 +5,50 @@ use nsh_core::prelude::*;
 use super::assets::glyphs;
 use super::clipboard_card::knowledge_card_view;
 use super::theme::ClippiTheme;
+use crate::core::filters::FilterCriteria;
 use crate::core::i18n_keys::I18nKey;
 use crate::core::types::KnowledgeItem;
 use crate::state::app::AppStore;
+
+fn filter_items(
+    items: &[KnowledgeItem],
+    filters: &FilterCriteria,
+    query: &str,
+) -> Vec<KnowledgeItem> {
+    let q = query.trim().to_lowercase();
+    items
+        .iter()
+        .filter(|item| {
+            if filters.favorites_only && !item.favorite && !item.is_favorite {
+                return false;
+            }
+            if let Some(kind) = filters.kind
+                && item.kind != kind
+            {
+                return false;
+            }
+            if let Some(scope) = &filters.scope
+                && !item.uri.starts_with(scope)
+            {
+                return false;
+            }
+            if !filters.tags.is_empty() && !filters.tags.iter().any(|t| item.tags.contains(t)) {
+                return false;
+            }
+            if !q.is_empty() {
+                let matches_title = item.title.to_lowercase().contains(&q);
+                let matches_content = item.content.to_lowercase().contains(&q);
+                let matches_uri = item.uri.to_lowercase().contains(&q);
+                let matches_tags = item.tags.iter().any(|t| t.to_lowercase().contains(&q));
+                if !matches_title && !matches_content && !matches_uri && !matches_tags {
+                    return false;
+                }
+            }
+            true
+        })
+        .cloned()
+        .collect()
+}
 
 /// Render knowledge item list view.
 pub fn clipboard_list_view(
@@ -25,10 +66,20 @@ pub fn clipboard_list_view(
     let on_delete_item = std::sync::Arc::new(on_delete_item);
 
     let items_signal = store.items;
+    let filters_signal = store.filters;
+    let query_signal = store.search_query;
     let selected_index_signal = store.selected_index;
     let search_query = store.search_query;
     let text_2 = theme.text_2;
     let text_3 = theme.text_3;
+
+    let get_filtered = move || {
+        filter_items(
+            &items_signal.get(),
+            &filters_signal.get(),
+            &query_signal.get(),
+        )
+    };
 
     view()
         .flex_1()
@@ -36,7 +87,7 @@ pub fn clipboard_list_view(
         .px(px(8.0))
         .child(
             when(
-                move || items_signal.with(Vec::is_empty),
+                move || get_filtered().is_empty(),
                 move || {
                     // Empty placeholder
                     view()
@@ -73,7 +124,7 @@ pub fn clipboard_list_view(
                             .gap(px(6.0))
                             .pb(px(8.0))
                             .child(each(
-                                items_signal,
+                                get_filtered,
                                 |item: &KnowledgeItem| item.id.clone(),
                                 move |item, index| {
                                     let item_val = item.get();

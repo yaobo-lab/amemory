@@ -70,7 +70,7 @@ pub struct ClippiTheme {
 impl ClippiTheme {
     /// Default dark theme (1:1 Clippi values).
     #[must_use]
-    pub fn dark() -> Self {
+    pub const fn dark() -> Self {
         Self {
             bg: rgb(0x191a1b),
             panel_bg: rgb(0x191a1b),
@@ -101,7 +101,7 @@ impl ClippiTheme {
 
     /// Default light theme (1:1 Clippi values).
     #[must_use]
-    pub fn light() -> Self {
+    pub const fn light() -> Self {
         Self {
             bg: rgb(0xf2f3f8),
             panel_bg: rgb(0xf2f3f8),
@@ -134,9 +134,15 @@ impl ClippiTheme {
     #[must_use]
     pub fn resolve(mode: ThemeMode) -> Self {
         match mode {
-            ThemeMode::Dark => Self::dark(),
             ThemeMode::Light => Self::light(),
-            ThemeMode::System => Self::dark(),
+            ThemeMode::Dark => Self::dark(),
+            ThemeMode::System => {
+                if crate::platform::is_system_dark_mode() {
+                    Self::dark()
+                } else {
+                    Self::light()
+                }
+            }
         }
     }
 }

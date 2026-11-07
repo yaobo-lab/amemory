@@ -22,7 +22,7 @@ pub fn register_global_hotkey(mut on_press: impl FnMut() + Send + 'static) {
                 unsafe {
                     let _ = RegisterHotKey(0, 1001, MOD_ALT | MOD_NOREPEAT, 0x20);
                     let mut msg: MSG = std::mem::zeroed();
-                    while GetMessageW(&mut msg, 0, 0, 0) > 0 {
+                    while GetMessageW(&raw mut msg, 0, 0, 0) > 0 {
                         if msg.message == WM_HOTKEY {
                             on_press();
                         }

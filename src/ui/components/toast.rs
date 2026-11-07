@@ -5,7 +5,8 @@ use nsh_core::prelude::*;
 use crate::state::app::ToastNotification;
 use crate::ui::theme::ClippiTheme;
 
-/// Render floating bottom toast banner from ToastNotification.
+/// Render floating bottom toast banner from `ToastNotification`.
+#[must_use]
 pub fn toast_banner(toast: ToastNotification, theme: ClippiTheme) -> impl IntoElement {
     toast_view(toast.message, theme)
 }

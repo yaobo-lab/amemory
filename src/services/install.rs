@@ -39,7 +39,7 @@ pub fn launch_prepared_update(installer_path: &Path) -> Result<(), String> {
         let dir: Option<Vec<u16>> = installer_path.parent().map(|d| {
             d.as_os_str().encode_wide().chain(std::iter::once(0)).collect()
         });
-        let dir_ptr = dir.as_ref().map_or(std::ptr::null(), |d| d.as_ptr());
+        let dir_ptr = dir.as_ref().map_or(std::ptr::null(), std::vec::Vec::as_ptr);
 
         let ret = unsafe {
             ShellExecuteW(0, op.as_ptr(), exe.as_ptr(), std::ptr::null(), dir_ptr, SW_SHOWNORMAL)

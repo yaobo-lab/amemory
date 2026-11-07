@@ -29,6 +29,7 @@ pub fn execute_quick_copy(
 }
 
 /// Execute quick copy for numerical shortcut (1..9).
+#[must_use]
 pub fn handle_number_shortcut(
     store: AppStore,
     number: usize,

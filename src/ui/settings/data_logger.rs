@@ -9,6 +9,7 @@ use crate::ui::components::toggle::render_toggle;
 use crate::ui::theme::ClippiTheme;
 
 /// Render Tab 5: Logging, diagnostics and sound settings.
+#[must_use]
 pub fn render_data_logger_tab(store: AppStore, theme: ClippiTheme) -> impl IntoElement {
     let settings = store.settings;
     let text_1 = theme.text_1;

@@ -27,7 +27,6 @@ pub fn edit_panel_view(
     let divider = theme.divider;
     let input_bg = theme.input_bg;
     let input_border = theme.input_border;
-    let _btn_hover = theme.btn_hover;
 
     let editing_item = store.editing_item;
     let current_item = editing_item.get();

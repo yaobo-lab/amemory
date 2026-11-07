@@ -1,4 +1,4 @@
-﻿//! Home dashboard statistics and XERJ engine metric banner.
+//! Home dashboard statistics and XERJ engine metric banner.
 
 use nsh_core::prelude::*;
 
@@ -9,6 +9,7 @@ use crate::core::types::{HealthLevel, ItemKind};
 use crate::state::app::AppStore;
 
 /// Render home stats overview cards and XERJ metric bar.
+#[must_use]
 pub fn stats_overview_view(store: AppStore, theme: ClippiTheme) -> impl IntoElement {
     let surface = theme.surface;
     let divider = theme.divider;
@@ -186,18 +187,17 @@ pub fn stats_overview_view(store: AppStore, theme: ClippiTheme) -> impl IntoElem
                                 .text_xs(),
                         )
                         .child(
-                            text(move || format!("Docs: {} · Segs: {} · 磁盘: {}", stats.with(|s| s.total_docs), stats.with(|s| s.index_count), stats.with(|s| s.disk_usage_label())))
+                            text(move || format!("Docs: {} · Segs: {} · 磁盘: {}", stats.with(|s| s.total_docs), stats.with(|s| s.index_count), stats.with(super::super::core::types::StatsSnapshot::disk_usage_label)))
                                 .text_color(text_2)
                                 .text_xs(),
                         ),
                 )
                 .child(
                     text(move || {
-                        if let Some(ms) = stats.with(|s| s.last_search_latency_ms) {
-                            format!("{ms} ms")
-                        } else {
-                            stats.with(|s| s.embed_mode.clone())
-                        }
+                        stats.with(|s| s.last_search_latency_ms).map_or_else(
+                            || stats.with(|s| s.embed_mode.clone()),
+                            |ms| format!("{ms} ms"),
+                        )
                     })
                     .text_color(accent)
                     .text_xs(),

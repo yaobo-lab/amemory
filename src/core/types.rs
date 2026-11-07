@@ -126,7 +126,7 @@ pub struct KnowledgeItem {
 impl KnowledgeItem {
     /// Whether this item maps to a whole Skill or Book entity (editable/deletable on disk).
     #[must_use]
-    pub fn is_catalog_entry(&self) -> bool {
+    pub const fn is_catalog_entry(&self) -> bool {
         matches!(self.kind, ItemKind::Skill | ItemKind::Book) && self.relative_path.is_empty()
     }
 }

@@ -1,4 +1,4 @@
-﻿//! Type filter configuration dialog.
+//! Type filter configuration dialog.
 
 use nsh_core::prelude::*;
 
@@ -10,7 +10,7 @@ use crate::state::app::AppStore;
 
 /// Render type filter configuration dialog
 pub fn type_filter_config_view(
-    store: AppStore,
+    _store: AppStore,
     theme: ClippiTheme,
     on_close: impl Fn() + 'static + Copy,
 ) -> impl IntoElement {
@@ -19,8 +19,6 @@ pub fn type_filter_config_view(
     let text_1 = theme.text_1;
     let text_3 = theme.text_3;
     let accent = theme.accent;
-
-    let _filters = store.filters;
 
     modal_overlay_view(
         view()
@@ -98,6 +96,7 @@ pub fn type_filter_config_view(
     )
 }
 
+#[allow(clippy::large_types_passed_by_value)]
 fn type_toggle_row(
     label: &'static str,
     desc: &'static str,

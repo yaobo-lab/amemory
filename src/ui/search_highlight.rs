@@ -5,6 +5,7 @@ use nsh_core::prelude::*;
 use crate::core::search::highlight_text;
 
 /// Render text with query matches highlighted.
+#[must_use]
 pub fn search_highlight_view(
     content: &str,
     query: &str,

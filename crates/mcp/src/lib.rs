@@ -13,6 +13,7 @@ pub use http::{HttpMcpConfig, build_http_router, serve_http};
 pub use registry::{UnifiedMcpServer, verify_no_tool_conflicts};
 pub use stdio::serve_stdio;
 pub use xerj::XerjToolProvider;
+pub use rmcp;
 
 /// Errors returned when constructing or serving the unified MCP facade.
 #[derive(Debug, Error)]

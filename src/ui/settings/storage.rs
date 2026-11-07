@@ -9,11 +9,11 @@ use crate::ui::components::toggle::render_toggle;
 use crate::ui::theme::ClippiTheme;
 
 /// Render Tab 2: Storage paths and boundary settings.
+#[must_use]
 pub fn render_storage_tab(_store: AppStore, theme: ClippiTheme) -> impl IntoElement {
     let text_1 = theme.text_1;
     let card_bg = theme.card_bg;
     let input_border = theme.input_border;
-    let _divider = theme.divider;
 
     let skills_path = signal("data/skills".to_string());
     let books_path = signal("data/books".to_string());

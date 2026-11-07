@@ -8,3 +8,5 @@ pub mod system_font;
 pub mod tag_window;
 pub mod tray;
 pub mod window_frame;
+
+pub use accent::{is_system_dark_mode, system_accent_hex};

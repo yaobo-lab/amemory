@@ -9,6 +9,7 @@ use crate::ui::components::toggle::render_toggle;
 use crate::ui::theme::ClippiTheme;
 
 /// Render Tab 4: MCP server protocol and shortcut configuration.
+#[must_use]
 pub fn render_mcp_hotkey_tab(store: AppStore, theme: ClippiTheme) -> impl IntoElement {
     let settings = store.settings;
     let text_1 = theme.text_1;

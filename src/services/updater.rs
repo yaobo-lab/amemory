@@ -28,7 +28,7 @@ pub async fn download_and_prepare_update(
         info.asset_size,
         |progress| {
             phase_callback(UpdatePhase::Downloading {
-                progress: (progress as f32) / 100.0,
+                progress: f32::from(progress) / 100.0,
             });
         },
     )
@@ -51,7 +51,7 @@ pub fn apply_update_and_restart(asset_name: &str) -> Result<(), String> {
     launch_prepared_update(&dest_path)
 }
 
-/// Helper coordinator for AppStore update actions.
+/// Helper coordinator for `AppStore` update actions.
 pub struct AppUpdater;
 
 impl AppUpdater {
@@ -72,7 +72,7 @@ impl AppUpdater {
                 store.set_update_phase(UpdatePhase::UpToDate);
             }
             Err(e) => {
-                store.set_update_phase(UpdatePhase::Error(e.to_string()));
+                store.set_update_phase(UpdatePhase::Error(e));
             }
         }
     }
@@ -84,7 +84,7 @@ impl AppUpdater {
             .get_untracked()
             .ok_or_else(|| "没有可用的更新版本".to_string())?;
 
-        let st = store.clone();
+        let st = store;
         download_and_prepare_update(&info, move |p| {
             st.set_update_phase(p);
         })

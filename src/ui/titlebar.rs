@@ -1,8 +1,8 @@
-﻿//! 30px Top Titlebar matching Clippi 1:1.
+//! 30px Top Titlebar matching Clippi 1:1.
 
 use nsh_core::prelude::*;
 
-use super::assets::glyphs;
+use super::assets::{glyphs, logo_notext_data_uri};
 use super::theme::ClippiTheme;
 use crate::core::i18n_keys::I18nKey;
 use crate::state::app::{ActiveView, AppStore};
@@ -61,8 +61,9 @@ pub fn titlebar_view(
                 .flex_1()
                 .window_drag(true)
                 .child(
-                    text("🧠")
-                        .text_sm(),
+                    image(logo_notext_data_uri())
+                        .size(px(18.0))
+                        .rounded(px(4.0)),
                 )
                 .child(
                     text(I18nKey::AppName.text())

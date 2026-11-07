@@ -28,7 +28,6 @@ pub const AVAILABLE_SOUNDS: [&str; 6] = [
 pub fn get_sound_data(filename: &str) -> Option<&'static [u8]> {
     match filename {
         "copy_penclick.wav" => Some(SOUND_PENCLICK),
-        "copy_kacha.wav" => Some(SOUND_KACHA),
         "copy_blip.wav" => Some(SOUND_BLIP),
         "copy_bubble.wav" => Some(SOUND_BUBBLE),
         "copy_clack.wav" => Some(SOUND_CLACK),
@@ -54,11 +53,10 @@ pub fn play_copy_sound(index: usize) {
 pub fn play_copy_sound_name(filename: &str) {
     if let Ok(mut last) = LAST_PLAY.lock() {
         let now = Instant::now();
-        if let Some(prev) = *last {
-            if now.duration_since(prev) < PLAY_DEBOUNCE {
+        if let Some(prev) = *last
+            && now.duration_since(prev) < PLAY_DEBOUNCE {
                 return;
             }
-        }
         *last = Some(now);
     }
 

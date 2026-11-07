@@ -205,10 +205,12 @@ impl UpdateChecker {
             return Ok(None);
         }
 
-        let asset = release
-            .assets
-            .into_iter()
-            .find(|a| a.name.ends_with(".exe") || a.name.ends_with(".zip"));
+        let asset = release.assets.into_iter().find(|a| {
+            std::path::Path::new(&a.name)
+                .extension()
+                .and_then(std::ffi::OsStr::to_str)
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("exe") || ext.eq_ignore_ascii_case("zip"))
+        });
 
         if let Some(asset) = asset {
             Ok(Some(UpdateInfo {
