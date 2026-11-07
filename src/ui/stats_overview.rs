@@ -3,6 +3,7 @@
 use nsh_core::prelude::*;
 
 use super::assets::glyphs;
+use super::components::tooltip_box;
 use super::theme::ClippiTheme;
 use crate::core::i18n_keys::I18nKey;
 use crate::core::types::{HealthLevel, ItemKind};
@@ -54,12 +55,13 @@ pub fn stats_overview_view(store: AppStore, theme: ClippiTheme) -> impl IntoElem
                         .cursor_pointer()
                         .active(|s| s.opacity(0.7))
                         .on_press(filter_skills)
+                        .tooltip(tooltip_box("点击筛选全部技能 (Skills)", theme))
                         .child(
                             view()
                                 .flex_row()
                                 .items_center()
                                 .gap(px(4.0))
-                                .child(text(glyphs::SKILL).text_color(accent).text_sm())
+                                .child(text(glyphs::SKILL).font_family("iconfont").text_color(accent).text_sm())
                                 .child(
                                     text(move || format!("{} {}", stats.with(|s| s.skills_count), I18nKey::StatsSkills.text()))
                                         .text_color(text_1)
@@ -92,12 +94,13 @@ pub fn stats_overview_view(store: AppStore, theme: ClippiTheme) -> impl IntoElem
                         .cursor_pointer()
                         .active(|s| s.opacity(0.7))
                         .on_press(filter_books)
+                        .tooltip(tooltip_box("点击筛选全部书本 (Books)", theme))
                         .child(
                             view()
                                 .flex_row()
                                 .items_center()
                                 .gap(px(4.0))
-                                .child(text(glyphs::BOOK).text_color(accent).text_sm())
+                                .child(text(glyphs::BOOK).font_family("iconfont").text_color(accent).text_sm())
                                 .child(
                                     text(move || format!("{} {}", stats.with(|s| s.books_count), I18nKey::StatsBooks.text()))
                                         .text_color(text_1)
@@ -130,12 +133,13 @@ pub fn stats_overview_view(store: AppStore, theme: ClippiTheme) -> impl IntoElem
                         .cursor_pointer()
                         .active(|s| s.opacity(0.7))
                         .on_press(filter_memory)
+                        .tooltip(tooltip_box("点击筛选全部记忆 (Memory)", theme))
                         .child(
                             view()
                                 .flex_row()
                                 .items_center()
                                 .gap(px(4.0))
-                                .child(text(glyphs::MEMORY).text_color(accent).text_sm())
+                                .child(text(glyphs::MEMORY).font_family("iconfont").text_color(accent).text_sm())
                                 .child(
                                     text(move || format!("{} {}", stats.with(|s| s.memory_docs), I18nKey::StatsMemory.text()))
                                         .text_color(text_1)

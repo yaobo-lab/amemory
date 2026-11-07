@@ -96,7 +96,7 @@ pub fn clipboard_list_view(
                         .justify_center()
                         .gap(px(8.0))
                         .py(px(40.0))
-                        .child(text(glyphs::SEARCH).text_color(text_3).text_2xl())
+                        .child(text(glyphs::SEARCH).font_family("iconfont").text_color(text_3).text_2xl())
                         .child(
                             text(I18nKey::CardEmptyTitle.text())
                                 .text_color(text_2)

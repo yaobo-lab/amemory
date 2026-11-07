@@ -4,7 +4,9 @@ use nsh_core::MouseEvent;
 use nsh_core::prelude::*;
 
 use super::assets::glyphs;
+use super::components::tooltip_box;
 use super::theme::ClippiTheme;
+use crate::core::i18n_keys::I18nKey;
 
 /// Render 20px action tab toolbar for a card.
 pub fn hover_toolbar_view(
@@ -33,6 +35,8 @@ pub fn hover_toolbar_view(
         .child(
             render_tab(
                 glyphs::COPY,
+                I18nKey::CardCopyContent.text(),
+                theme,
                 surface,
                 accent,
                 text_2,
@@ -44,6 +48,8 @@ pub fn hover_toolbar_view(
         .child(
             render_tab(
                 glyphs::EDIT,
+                I18nKey::CardEditItem.text(),
+                theme,
                 surface,
                 accent,
                 text_2,
@@ -55,6 +61,8 @@ pub fn hover_toolbar_view(
         .child(
             render_tab(
                 glyphs::STAR,
+                I18nKey::CardFavorite.text(),
+                theme,
                 surface,
                 fav_color,
                 if is_favorite { fav_color } else { text_2 },
@@ -66,6 +74,8 @@ pub fn hover_toolbar_view(
         .child(
             render_tab(
                 glyphs::DELETE,
+                I18nKey::CardDelete.text(),
+                theme,
                 surface,
                 danger,
                 text_2,
@@ -75,8 +85,11 @@ pub fn hover_toolbar_view(
         )
 }
 
+#[allow(clippy::too_many_arguments, clippy::large_types_passed_by_value)]
 fn render_tab(
     icon: &'static str,
+    tip: &'static str,
+    theme: ClippiTheme,
     bg: Rgba,
     hover_bg: Rgba,
     text_color: Rgba,
@@ -98,8 +111,10 @@ fn render_tab(
         .on_mouse_enter(move |_: &MouseEvent| is_hovered.set(true))
         .on_mouse_leave(move |_: &MouseEvent| is_hovered.set(false))
         .on_press(on_press)
+        .tooltip(tooltip_box(tip, theme))
         .child(
             text(icon)
+                .font_family("iconfont")
                 .text_color(move || if is_hovered.get() { rgb(0xffffff) } else { text_color })
                 .text_xs(),
         )

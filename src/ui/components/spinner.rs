@@ -1,4 +1,4 @@
-﻿//! Loading and sync spinner indicator.
+//! Loading and sync spinner indicator.
 
 use nsh_core::prelude::*;
 
@@ -14,6 +14,7 @@ pub fn loading_spinner(theme: ClippiTheme) -> impl IntoElement {
         .justify_center()
         .child(
             text(glyphs::SYNC)
+                .font_family("iconfont")
                 .text_color(theme.accent)
                 .text_sm(),
         )

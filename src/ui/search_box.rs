@@ -5,6 +5,7 @@ use nsh_core::MouseEvent;
 use nsh_core::prelude::*;
 
 use super::assets::glyphs;
+use super::components::tooltip_box;
 use super::theme::ClippiTheme;
 use crate::core::i18n_keys::I18nKey;
 use crate::state::app::{ActiveView, AppStore};
@@ -52,6 +53,7 @@ pub fn search_box_view(
                 .gap(px(6.0))
                 .child(
                     text(glyphs::SEARCH)
+                        .font_family("iconfont")
                         .text_color(text_3)
                         .text_sm(),
                 )
@@ -86,6 +88,7 @@ pub fn search_box_view(
                 .on_mouse_enter(move |_: &MouseEvent| is_expanded.set(true))
                 .on_mouse_leave(move |_: &MouseEvent| is_expanded.set(false))
                 .on_press(open_new_item)
+                .tooltip(tooltip_box(I18nKey::EditTitleNew.text(), theme))
                 .style_with(move |s| {
                     if is_expanded.get() {
                         s.w(px(76.0))

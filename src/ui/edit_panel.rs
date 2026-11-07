@@ -6,6 +6,7 @@ use nsh_core::prelude::*;
 use toolkit_rs::chrono::Utc;
 
 use super::assets::glyphs;
+use super::components::tooltip_box;
 use super::theme::ClippiTheme;
 use crate::core::find_replace;
 use crate::core::i18n_keys::I18nKey;
@@ -86,6 +87,7 @@ pub fn edit_panel_view(
                         .on_press(move || {
                             on_back();
                         })
+                        .tooltip(tooltip_box("返回主列表", theme))
                         .child(
                             text(glyphs::BACK)
                                 .font_family("iconfont")

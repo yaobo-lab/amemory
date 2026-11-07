@@ -61,7 +61,7 @@ fn render_menu_item(
                 .flex_row()
                 .items_center()
                 .gap(px(6.0))
-                .child(text(icon).text_color(text_color).text_sm())
+                .child(text(icon).font_family("iconfont").text_color(text_color).text_sm())
                 .child(text(label).text_color(text_color).text_xs()),
         )
         .child(

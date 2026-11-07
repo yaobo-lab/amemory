@@ -126,7 +126,7 @@ impl ClippiTheme {
             panel_input_bg: rgb(0xf5f6fc),
             input_bg: rgb(0xf5f6fc),
             panel_sep_line: rgba(0x00000010),
-            toast_bg: rgba(0xffffff0),
+            toast_bg: rgba(0xfffffff0),
         }
     }
 

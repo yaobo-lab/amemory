@@ -138,8 +138,8 @@ impl Default for GuiSettings {
             paste_on_select: true,
             global_summon_hotkey: "Alt+Space".to_string(),
             show_stats_overview: true,
-            window_width: 324.0,
-            window_height: 480.0,
+            window_width: 525.0,
+            window_height: 525.0,
             last_pos_x: None,
             last_pos_y: None,
         }

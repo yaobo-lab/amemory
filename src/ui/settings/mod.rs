@@ -4,6 +4,7 @@ use nsh_core::element::AnyElement;
 use nsh_core::prelude::*;
 
 use super::assets::glyphs;
+use super::components::tooltip_box;
 use super::theme::ClippiTheme;
 use crate::core::i18n_keys::I18nKey;
 use crate::state::app::{ActiveView, AppStore};
@@ -149,6 +150,7 @@ pub fn settings_panel_view(
                         .on_press(move || {
                             store.active_view.set(ActiveView::ClipboardList);
                         })
+                        .tooltip(tooltip_box("返回主列表", theme))
                         .child(
                             text(glyphs::BACK)
                                 .font_family("iconfont")

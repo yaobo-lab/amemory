@@ -2,7 +2,8 @@
 
 use nsh_core::prelude::*;
 
-use super::assets::{glyphs, logo_notext_data_uri};
+use super::assets::glyphs;
+use super::components::tooltip_box;
 use super::theme::ClippiTheme;
 use crate::core::i18n_keys::I18nKey;
 use crate::state::app::{ActiveView, AppStore};
@@ -14,7 +15,6 @@ pub fn titlebar_view(
     on_trigger_sync: impl Fn() + 'static,
 ) -> impl IntoElement {
     let titlebar_bg = theme.titlebar_bg;
-    let text_1 = theme.text_1;
     let text_2 = theme.text_2;
     let accent = theme.accent;
     let btn_hover = theme.btn_hover;
@@ -52,25 +52,12 @@ pub fn titlebar_view(
         .justify_between()
         .pl(px(10.0))
         .pr(px(4.0))
-        // Window drag area on the title / logo section
+        // Window drag spacer area on the left (title moved to native window frame)
         .child(
             view()
-                .flex_row()
-                .items_center()
-                .gap(px(6.0))
                 .flex_1()
-                .window_drag(true)
-                .child(
-                    image(logo_notext_data_uri())
-                        .size(px(18.0))
-                        .rounded(px(4.0)),
-                )
-                .child(
-                    text(I18nKey::AppName.text())
-                        .text_color(text_1)
-                        .font_weight(FontWeight::BOLD)
-                        .text_xs(),
-                ),
+                .h_full()
+                .window_drag(true),
         )
         // Right-side 28x28 action icon buttons
         .child(
@@ -89,8 +76,10 @@ pub fn titlebar_view(
                         .cursor_pointer()
                         .hover(move |s| s.bg(btn_hover))
                         .on_press(toggle_stats)
+                        .tooltip(tooltip_box(I18nKey::TitlebarToggleStats.text(), theme))
                         .child(
                             text(glyphs::STATS)
+                                .font_family("iconfont")
                                 .text_color(move || if show_stats.get() { accent } else { text_2 })
                                 .text_sm(),
                         ),
@@ -105,8 +94,10 @@ pub fn titlebar_view(
                         .cursor_pointer()
                         .hover(move |s| s.bg(btn_hover))
                         .on_press(on_trigger_sync)
+                        .tooltip(tooltip_box(I18nKey::TitlebarSyncCatalog.text(), theme))
                         .child(
                             text(glyphs::SYNC)
+                                .font_family("iconfont")
                                 .text_color(move || if is_syncing.get() { accent } else { text_2 })
                                 .text_sm(),
                         ),
@@ -121,8 +112,10 @@ pub fn titlebar_view(
                         .cursor_pointer()
                         .hover(move |s| s.bg(btn_hover))
                         .on_press(toggle_fav)
+                        .tooltip(tooltip_box(I18nKey::TitlebarFilterFavorite.text(), theme))
                         .child(
                             text(glyphs::STAR)
+                                .font_family("iconfont")
                                 .text_color(move || if filters.with(|f| f.favorites_only) { theme.fav_color } else { text_2 })
                                 .text_sm(),
                         ),
@@ -137,8 +130,10 @@ pub fn titlebar_view(
                         .cursor_pointer()
                         .hover(move |s| s.bg(btn_hover))
                         .on_press(toggle_pin)
+                        .tooltip(tooltip_box(I18nKey::TitlebarAlwaysOnTop.text(), theme))
                         .child(
                             text(glyphs::PIN)
+                                .font_family("iconfont")
                                 .text_color(move || if is_pinned.get() { accent } else { text_2 })
                                 .text_sm(),
                         ),
@@ -153,11 +148,13 @@ pub fn titlebar_view(
                         .cursor_pointer()
                         .hover(move |s| s.bg(btn_hover))
                         .on_press(open_settings)
+                        .tooltip(tooltip_box(I18nKey::TitlebarSettings.text(), theme))
                         .child(
                             view()
                                 .relative()
                                 .child(
                                     text(glyphs::SETTINGS)
+                                        .font_family("iconfont")
                                         .text_color(text_2)
                                         .text_sm(),
                                 )

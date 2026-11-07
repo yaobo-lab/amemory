@@ -13,10 +13,10 @@ pub const MAX_WINDOW_WIDTH: f32 = 1164.0;
 /// Maximum window height.
 pub const MAX_WINDOW_HEIGHT: f32 = 1200.0;
 
-/// Default window dimensions.
-pub const DEFAULT_WINDOW_WIDTH: f32 = 324.0;
-/// Default window height (480px matching Clippi).
-pub const DEFAULT_WINDOW_HEIGHT: f32 = 480.0;
+/// Default window dimensions (525x525).
+pub const DEFAULT_WINDOW_WIDTH: f32 = 525.0;
+/// Default window height (525x525).
+pub const DEFAULT_WINDOW_HEIGHT: f32 = 525.0;
 /// Default window width alias.
 pub const DEFAULT_WINDOW_W: f32 = DEFAULT_WINDOW_WIDTH;
 /// Default window height alias.

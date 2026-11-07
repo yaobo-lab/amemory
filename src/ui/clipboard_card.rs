@@ -90,6 +90,7 @@ pub fn knowledge_card_view(
                 .gap(px(2.0))
                 .child(
                     text(icon)
+                        .font_family("iconfont")
                         .text_color(if is_selected { accent } else { text_2 })
                         .text_sm(),
                 )

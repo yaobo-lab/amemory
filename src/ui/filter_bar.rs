@@ -3,6 +3,7 @@
 use nsh_core::prelude::*;
 
 use super::assets::glyphs;
+use super::components::tooltip_box;
 use super::theme::ClippiTheme;
 use crate::core::filters::SearchMode;
 use crate::core::i18n_keys::I18nKey;
@@ -74,8 +75,10 @@ pub fn filter_bar_view(
                                         .on_press(move || {
                                             filters.update(|f| f.kind = k);
                                         })
+                                        .tooltip(tooltip_box(format!("按「{label}」分类筛选"), theme))
                                         .child(
                                             text(icon)
+                                                .font_family("iconfont")
                                                 .text_color(move || if filters.get().kind == k { accent } else { text_2 })
                                                 .text_xs(),
                                         )
@@ -108,8 +111,10 @@ pub fn filter_bar_view(
                                 .justify_center()
                                 .cursor_pointer()
                                 .on_press(toggle_sidebar)
+                                .tooltip(tooltip_box(I18nKey::FilterTagButton.text(), theme))
                                 .child(
                                     text(glyphs::TAG)
+                                        .font_family("iconfont")
                                         .text_color(move || if is_sidebar_open.get() { accent } else { text_2 })
                                         .text_xs(),
                                 ),

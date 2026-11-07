@@ -3,7 +3,9 @@
 use nsh_core::prelude::*;
 
 use super::assets::glyphs;
+use super::components::tooltip_box;
 use super::theme::ClippiTheme;
+use crate::core::i18n_keys::I18nKey;
 use crate::state::app::AppStore;
 
 /// Render 26px bottom status bar.
@@ -72,7 +74,8 @@ pub fn bottom_bar_view(
                         .cursor_pointer()
                         .hover(move |s| s.bg(btn_hover))
                         .on_press(on_quick_sync)
-                        .child(text(glyphs::SYNC).text_color(text_2).text_xs()),
+                        .tooltip(tooltip_box(I18nKey::BottomQuickSync.text(), theme))
+                        .child(text(glyphs::SYNC).font_family("iconfont").text_color(text_2).text_xs()),
                 )
                 .child(
                     view()
@@ -83,7 +86,8 @@ pub fn bottom_bar_view(
                         .cursor_pointer()
                         .hover(move |s| s.bg(btn_hover))
                         .on_press(on_copy_endpoint)
-                        .child(text(glyphs::COPY).text_color(text_2).text_xs()),
+                        .tooltip(tooltip_box(I18nKey::BottomCopyEndpoint.text(), theme))
+                        .child(text(glyphs::COPY).font_family("iconfont").text_color(text_2).text_xs()),
                 ),
         )
 }

@@ -61,6 +61,8 @@ pub struct ToastNotification {
     pub message: String,
     /// Whether this is an error notification.
     pub is_error: bool,
+    /// Creation timestamp for auto-dismissal.
+    pub created_at: std::time::Instant,
 }
 
 /// Core reactive app state container.
@@ -171,7 +173,7 @@ impl AppStore {
         self.active_view.set(ActiveView::Edit);
     }
 
-    /// Show a transient toast message.
+    /// Show a transient toast message (auto-dismisses after ~2.2 seconds).
     pub fn show_toast(&self, message: impl Into<String>) {
         static NEXT_ID: AtomicU64 = AtomicU64::new(1);
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
@@ -181,7 +183,20 @@ impl AppStore {
             id,
             message: msg,
             is_error: false,
+            created_at: std::time::Instant::now(),
         }));
+    }
+
+    /// Check and clear expired toast notifications.
+    pub fn check_toast_expiry(&self) {
+        let should_clear = self.active_toast.with(|t| {
+            t.as_ref()
+                .is_some_and(|n| n.created_at.elapsed() >= std::time::Duration::from_millis(2200))
+        });
+        if should_clear {
+            self.toast.set(None);
+            self.active_toast.set(None);
+        }
     }
 
     /// Show confirmation dialog.

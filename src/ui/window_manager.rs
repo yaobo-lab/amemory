@@ -68,6 +68,7 @@ impl Component for AmemoryGuiComponent {
                     action(rx_store);
                 }
             }
+            rx_store.check_toast_expiry();
         });
 
         // 4. Start background polling loop (stats every 5s)
@@ -253,11 +254,12 @@ pub fn run_gui(runtime: Arc<AmemoryRuntime>, config: AppConfig) {
     }
 
     let root = Root::of::<AmemoryGuiComponent>()
-        .app_id("com.amemory.app");
+        .app_id("com.amemory.app")
+        .font(crate::ui::assets::ICONFONT_TTF_BYTES.to_vec());
 
     let options = AppOptions {
         app_id: "com.amemory.app".to_string(),
-        title: "amemory".to_string(),
+        title: crate::core::i18n_keys::I18nKey::AppName.text().to_string(),
         size: (DEFAULT_WINDOW_W as i32, DEFAULT_WINDOW_H as i32),
         ..AppOptions::default()
     };
