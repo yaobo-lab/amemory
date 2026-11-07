@@ -7,10 +7,11 @@ use toolkit_rs::chrono::Utc;
 
 use super::assets::glyphs;
 use super::components::tooltip_box;
+use super::rich_preview::rich_preview_view;
 use super::theme::ClippiTheme;
 use crate::core::find_replace;
 use crate::core::i18n_keys::I18nKey;
-use crate::core::types::{ItemKind, KnowledgeItem};
+use crate::core::types::{ItemKind, KnowledgeItem, SubFileEntry};
 use crate::state::app::AppStore;
 
 /// Render Edit / Create panel
@@ -24,6 +25,7 @@ pub fn edit_panel_view(
     let text_2 = theme.text_2;
     let text_3 = theme.text_3;
     let accent = theme.accent;
+    let accent_soft = theme.accent_soft;
     let card_bg = theme.card_bg;
     let divider = theme.divider;
     let input_bg = theme.input_bg;
@@ -47,11 +49,52 @@ pub fn edit_panel_view(
         ..Default::default()
     });
 
-    let draft_title = signal(initial_item.title.clone());
-    let draft_content = signal(initial_item.content.clone());
+    // Multi-level file list (for Skills & Books with subdirectories like references/, scripts/, chapters/)
+    let initial_files: Vec<SubFileEntry> = if initial_item.sub_files.is_empty() {
+        let default_rel = if !initial_item.relative_path.is_empty() {
+            initial_item.relative_path.clone()
+        } else if initial_item.kind == ItemKind::Skill {
+            "SKILL.md".to_string()
+        } else if initial_item.kind == ItemKind::Book {
+            "BOOK.md".to_string()
+        } else {
+            String::new()
+        };
+        if default_rel.is_empty() {
+            Vec::new()
+        } else {
+            vec![SubFileEntry {
+                relative_path: default_rel,
+                content: initial_item.content.clone(),
+            }]
+        }
+    } else {
+        initial_item.sub_files.clone()
+    };
+
+    let initial_file_idx = initial_files
+        .iter()
+        .position(|f| !initial_item.relative_path.is_empty() && f.relative_path == initial_item.relative_path)
+        .unwrap_or(0);
+
+    let initial_content = initial_files
+        .get(initial_file_idx)
+        .map_or_else(|| initial_item.content.clone(), |f| f.content.clone());
+
+    let draft_title = signal(if initial_item.owner.is_empty() {
+        initial_item.title.clone()
+    } else {
+        initial_item.owner.clone()
+    });
+    let draft_content = signal(initial_content);
+    let draft_files = signal(initial_files);
+    let active_file_idx = signal(initial_file_idx);
     let draft_kind = signal(initial_item.kind);
     let draft_tags = signal(initial_item.tags.join(", "));
     let find_open = signal(false);
+    let preview_open = signal(false);
+    let new_subfile_open = signal(false);
+    let new_subfile_path = signal(String::new());
     let find_text = signal(String::new());
     let replace_text = signal(String::new());
 
@@ -114,7 +157,20 @@ pub fn edit_panel_view(
                         .on_press(move || {
                             let mut item = initial_item.clone();
                             item.title = draft_title.get();
-                            item.content = draft_content.get();
+                            let current_txt = draft_content.get();
+                            let idx = active_file_idx.get();
+                            draft_files.update(|files| {
+                                if let Some(slot) = files.get_mut(idx) {
+                                    slot.content.clone_from(&current_txt);
+                                }
+                            });
+                            let updated_files = draft_files.get();
+                            if let Some(primary) = updated_files.first() {
+                                item.content.clone_from(&primary.content);
+                            } else {
+                                item.content = current_txt;
+                            }
+                            item.sub_files = updated_files;
                             item.kind = draft_kind.get();
                             item.tags = draft_tags
                                 .get()
@@ -164,6 +220,8 @@ pub fn edit_panel_view(
                                     "Skill",
                                     ItemKind::Skill,
                                     draft_kind,
+                                    draft_files,
+                                    draft_content,
                                     accent,
                                     divider,
                                     text_2,
@@ -172,6 +230,8 @@ pub fn edit_panel_view(
                                     "Book",
                                     ItemKind::Book,
                                     draft_kind,
+                                    draft_files,
+                                    draft_content,
                                     accent,
                                     divider,
                                     text_2,
@@ -180,6 +240,8 @@ pub fn edit_panel_view(
                                     "Memory",
                                     ItemKind::Memory,
                                     draft_kind,
+                                    draft_files,
+                                    draft_content,
                                     accent,
                                     divider,
                                     text_2,
@@ -188,6 +250,28 @@ pub fn edit_panel_view(
                                     "Note",
                                     ItemKind::Note,
                                     draft_kind,
+                                    draft_files,
+                                    draft_content,
+                                    accent,
+                                    divider,
+                                    text_2,
+                                ))
+                                .child(type_chip(
+                                    "Script",
+                                    ItemKind::Script,
+                                    draft_kind,
+                                    draft_files,
+                                    draft_content,
+                                    accent,
+                                    divider,
+                                    text_2,
+                                ))
+                                .child(type_chip(
+                                    "Doc",
+                                    ItemKind::Document,
+                                    draft_kind,
+                                    draft_files,
+                                    draft_content,
                                     accent,
                                     divider,
                                     text_2,
@@ -195,24 +279,46 @@ pub fn edit_panel_view(
                         ),
                 )
                 .child(
-                    // Find/Replace Toggle
+                    // Right toolbar: Preview toggle + Find/Replace Toggle
                     view()
-                        .px(px(6.0))
-                        .py(px(2.0))
-                        .rounded(px(4.0))
-                        .bg(divider)
-                        .cursor_pointer()
-                        .on_press(move || {
-                            find_open.update(|v| *v = !*v);
-                        })
+                        .flex_row()
+                        .items_center()
+                        .gap(px(4.0))
                         .child(
-                            text("🔍 查找替换")
-                                .text_color(text_2)
-                                .text_xs(),
+                            view()
+                                .px(px(6.0))
+                                .py(px(2.0))
+                                .rounded(px(4.0))
+                                .bg(move || if preview_open.get() { accent } else { divider })
+                                .cursor_pointer()
+                                .on_press(move || {
+                                    preview_open.update(|v| *v = !*v);
+                                })
+                                .child(
+                                    text(I18nKey::EditPreview.text())
+                                        .text_color(move || if preview_open.get() { rgb(0xffffff) } else { text_2 })
+                                        .text_xs(),
+                                ),
+                        )
+                        .child(
+                            view()
+                                .px(px(6.0))
+                                .py(px(2.0))
+                                .rounded(px(4.0))
+                                .bg(move || if find_open.get() { accent } else { divider })
+                                .cursor_pointer()
+                                .on_press(move || {
+                                    find_open.update(|v| *v = !*v);
+                                })
+                                .child(
+                                    text("🔍 查找替换")
+                                        .text_color(move || if find_open.get() { rgb(0xffffff) } else { text_2 })
+                                        .text_xs(),
+                                ),
                         ),
                 ),
         )
-        // ── 3. Find & Replace collapsible bar (26px) ──
+        // ── 3. Find & Replace collapsible bar (28px) ──
         .child(
             when(
                 move || find_open.get(),
@@ -232,7 +338,7 @@ pub fn edit_panel_view(
                                 .value(move || find_text.get())
                                 .on_change(move |v: &str| find_text.set(v.to_string()))
                                 .placeholder(I18nKey::EditFindPlaceholder.text())
-                                .w(px(100.0))
+                                .w(px(90.0))
                                 .h(px(22.0))
                                 .rounded(px(4.0))
                                 .border(px(1.0))
@@ -246,7 +352,7 @@ pub fn edit_panel_view(
                                 .value(move || replace_text.get())
                                 .on_change(move |v: &str| replace_text.set(v.to_string()))
                                 .placeholder(I18nKey::EditReplacePlaceholder.text())
-                                .w(px(100.0))
+                                .w(px(90.0))
                                 .h(px(22.0))
                                 .rounded(px(4.0))
                                 .border(px(1.0))
@@ -254,6 +360,58 @@ pub fn edit_panel_view(
                                 .bg(card_bg)
                                 .text_xs()
                                 .text_color(text_1),
+                        )
+                        .child(
+                            text(move || {
+                                let q = find_text.get();
+                                if q.is_empty() {
+                                    String::new()
+                                } else {
+                                    let count = find_replace::find_matches(&draft_content.get(), &q).total;
+                                    format!("{count}处")
+                                }
+                            })
+                            .text_color(text_3)
+                            .text_xs(),
+                        )
+                        .child(
+                            view()
+                                .px(px(6.0))
+                                .py(px(2.0))
+                                .rounded(px(4.0))
+                                .bg(divider)
+                                .cursor_pointer()
+                                .on_press(move || {
+                                    let query = find_text.get();
+                                    let repl = replace_text.get();
+                                    if !query.is_empty() {
+                                        let mut did_replace = false;
+                                        draft_content.update(|c| {
+                                            let (replaced, ok) = find_replace::replace_first(c, &query, &repl);
+                                            if ok {
+                                                *c = replaced;
+                                                did_replace = true;
+                                            }
+                                        });
+                                        if did_replace {
+                                            let idx = active_file_idx.get_untracked();
+                                            let latest = draft_content.get_untracked();
+                                            draft_files.update(|list| {
+                                                if let Some(slot) = list.get_mut(idx) {
+                                                    slot.content = latest;
+                                                }
+                                            });
+                                            store.show_toast("已替换首处匹配");
+                                        } else {
+                                            store.show_toast("未找到匹配内容");
+                                        }
+                                    }
+                                })
+                                .child(
+                                    text(I18nKey::EditReplaceOne.text())
+                                        .text_color(text_1)
+                                        .text_xs(),
+                                ),
                         )
                         .child(
                             view()
@@ -266,10 +424,20 @@ pub fn edit_panel_view(
                                     let query = find_text.get();
                                     let repl = replace_text.get();
                                     if !query.is_empty() {
+                                        let mut replaced_count = 0;
                                         draft_content.update(|c| {
-                                            let (replaced, ..) = find_replace::replace_all(c, &query, &repl);
+                                            let (replaced, count, _) = find_replace::replace_all(c, &query, &repl);
                                             *c = replaced;
+                                            replaced_count = count;
                                         });
+                                        let idx = active_file_idx.get_untracked();
+                                        let latest = draft_content.get_untracked();
+                                        draft_files.update(|list| {
+                                            if let Some(slot) = list.get_mut(idx) {
+                                                slot.content = latest;
+                                            }
+                                        });
+                                        store.show_toast(format!("已全部替换 {replaced_count} 处"));
                                     }
                                 })
                                 .child(
@@ -337,7 +505,115 @@ pub fn edit_panel_view(
                         .text_color(text_1),
                 ),
         )
-        // ── 6. Multiline Content Editor & Live Preview ──
+        // ── 5.5 Multi-level File Tree / Tabs (when item has sub-files like SKILL.md, references/*, scripts/*) ──
+        .child(
+            when(
+                move || !draft_files.get().is_empty(),
+                move || {
+                    let files = draft_files.get();
+                    view()
+                        .px(px(10.0))
+                        .pb(px(6.0))
+                        .flex_col()
+                        .gap(px(4.0))
+                        .child(
+                            view()
+                                .flex_row()
+                                .items_center()
+                                .justify_between()
+                                .child(
+                                    text(format!("多级文件列表 ({} 个文件):", files.len()))
+                                        .text_color(text_3)
+                                        .font_weight(FontWeight::BOLD)
+                                        .text_xs(),
+                                )
+                                .child(
+                                    text(move || {
+                                        let idx = active_file_idx.get();
+                                        let list = draft_files.get();
+                                        list.get(idx).map_or_else(String::new, |f| {
+                                            format!(
+                                                "当前: {} ({} 行 · {} B)",
+                                                f.relative_path,
+                                                draft_content.get().lines().count(),
+                                                draft_content.get().len()
+                                            )
+                                        })
+                                    })
+                                    .text_color(accent)
+                                    .text_xs(),
+                                ),
+                        )
+                        .child(
+                            scroll()
+                                .horizontal()
+                                .w_full()
+                                .child(
+                                    view()
+                                        .flex_row()
+                                        .gap(px(4.0))
+                                        .children(files.into_iter().enumerate().map(move |(idx, sf)| {
+                                            let path_label = sf.relative_path.clone();
+                                            let path_tip = sf.relative_path;
+                                            let file_icon = if path_label.starts_with("scripts/") {
+                                                glyphs::SCRIPT
+                                            } else if path_label.starts_with("references/") || path_label.starts_with("notes/") {
+                                                glyphs::NOTE
+                                            } else if path_label == "BOOK.md" || path_label.starts_with("chapters/") {
+                                                glyphs::BOOK
+                                            } else {
+                                                glyphs::SKILL
+                                            };
+
+                                            view()
+                                                .h(px(24.0))
+                                                .px(px(8.0))
+                                                .rounded(px(5.0))
+                                                .bg(move || if active_file_idx.get() == idx { accent_soft } else { card_bg })
+                                                .border(px(1.0))
+                                                .border_color(move || if active_file_idx.get() == idx { accent } else { divider })
+                                                .flex_row()
+                                                .items_center()
+                                                .gap(px(4.0))
+                                                .cursor_pointer()
+                                                .tooltip(tooltip_box(format!("切换查看/编辑: {path_tip}"), theme))
+                                                .on_press(move || {
+                                                    let prev_idx = active_file_idx.get_untracked();
+                                                    if prev_idx != idx {
+                                                        let current_txt = draft_content.get_untracked();
+                                                        draft_files.update(|list| {
+                                                            if let Some(slot) = list.get_mut(prev_idx) {
+                                                                slot.content = current_txt;
+                                                            }
+                                                        });
+                                                        let next_txt = draft_files
+                                                            .get_untracked()
+                                                            .get(idx)
+                                                            .map(|f| f.content.clone())
+                                                            .unwrap_or_default();
+                                                        active_file_idx.set(idx);
+                                                        draft_content.set(next_txt);
+                                                    }
+                                                })
+                                                .child(
+                                                    text(file_icon)
+                                                        .font_family("iconfont")
+                                                        .text_color(move || if active_file_idx.get() == idx { accent } else { text_2 })
+                                                        .text_xs(),
+                                                )
+                                                .child(
+                                                    text(path_label)
+                                                        .text_color(move || if active_file_idx.get() == idx { accent } else { text_1 })
+                                                        .font_weight(FontWeight::MEDIUM)
+                                                        .text_xs(),
+                                                )
+                                        })),
+                                ),
+                        )
+                },
+            ),
+        )
+        // ── 6. Multiline Content Editor ──
         .child(
             view()
                 .flex_1()
@@ -347,8 +623,19 @@ pub fn edit_panel_view(
                 .gap(px(6.0))
                 .child(
                     input()
+                        .multiline(true)
+                        .scrollbar(true)
                         .value(move || draft_content.get())
-                        .on_change(move |v: &str| draft_content.set(v.to_string()))
+                        .on_change(move |v: &str| {
+                            let val = v.to_string();
+                            draft_content.set(val.clone());
+                            let idx = active_file_idx.get_untracked();
+                            draft_files.update(|list| {
+                                if let Some(slot) = list.get_mut(idx) {
+                                    slot.content = val;
+                                }
+                            });
+                        })
                         .placeholder(I18nKey::EditContentPlaceholder.text())
                         .w_full()
                         .flex_1()

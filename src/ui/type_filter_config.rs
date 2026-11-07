@@ -6,11 +6,12 @@ use super::components::modal_overlay::modal_overlay_view;
 use super::components::toggle::render_toggle;
 use super::theme::ClippiTheme;
 use crate::core::i18n_keys::I18nKey;
+use crate::core::types::ItemKind;
 use crate::state::app::AppStore;
 
 /// Render type filter configuration dialog
 pub fn type_filter_config_view(
-    _store: AppStore,
+    store: AppStore,
     theme: ClippiTheme,
     on_close: impl Fn() + 'static + Copy,
 ) -> impl IntoElement {
@@ -62,11 +63,12 @@ pub fn type_filter_config_view(
                     .text_xs(),
             )
             // Type toggle rows
-            .child(type_toggle_row("Skills 技能", "Prompt 模板与执行动作", theme))
-            .child(type_toggle_row("Books 书本", "知识书本与参考手册", theme))
-            .child(type_toggle_row("Docs 文档", "长文档与分段章节", theme))
-            .child(type_toggle_row("Memory 记忆", "XERJ 实时记忆片段", theme))
-            .child(type_toggle_row("Notes 便签", "临时笔记与文本草稿", theme))
+            .child(type_toggle_row(store, ItemKind::Skill, "Skills 技能", "Prompt 模板与执行动作", theme))
+            .child(type_toggle_row(store, ItemKind::Book, "Books 书本", "知识书本与参考手册", theme))
+            .child(type_toggle_row(store, ItemKind::Document, "Docs 文档", "长文档与分段章节", theme))
+            .child(type_toggle_row(store, ItemKind::Memory, "Memory 记忆", "XERJ 实时记忆片段", theme))
+            .child(type_toggle_row(store, ItemKind::Script, "Scripts 脚本", "自动化脚本与工具代码", theme))
+            .child(type_toggle_row(store, ItemKind::Note, "Notes 便签", "临时笔记与参考文档", theme))
             // Bottom Done button
             .child(
                 view()
@@ -98,13 +100,15 @@ pub fn type_filter_config_view(
 
 #[allow(clippy::large_types_passed_by_value)]
 fn type_toggle_row(
+    store: AppStore,
+    kind: ItemKind,
     label: &'static str,
     desc: &'static str,
     theme: ClippiTheme,
 ) -> impl IntoElement {
     let text_1 = theme.text_1;
     let text_3 = theme.text_3;
-    let enabled = signal(true);
+    let initial_enabled = store.settings.get_untracked().is_kind_visible(kind);
 
     view()
         .w_full()
@@ -128,10 +132,13 @@ fn type_toggle_row(
         )
         .child(
             render_toggle(
-                enabled.get(),
+                initial_enabled,
                 theme,
                 move |next| {
-                    enabled.set(next);
+                    store.update_settings(|s| s.set_kind_visible(kind, next));
+                    if !next && store.filters.get_untracked().kind == Some(kind) {
+                        store.filters.update(|f| f.kind = None);
+                    }
                 },
             ),
         )

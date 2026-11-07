@@ -1,10 +1,12 @@
 //! GUI appearance and interaction settings.
 
+use std::collections::BTreeMap;
 use std::fs;
 
 use serde::{Deserialize, Serialize};
 
 use super::paths::project_root;
+use super::types::ItemKind;
 
 /// Path where GUI-specific user preferences are stored.
 const GUI_SETTINGS_FILE: &str = "etc/gui_settings.json";
@@ -72,7 +74,7 @@ pub struct GuiSettings {
     pub accent_color: Option<String>,
     /// Custom font family.
     pub font_family: Option<String>,
-    /// Font scaling multiplier (0.85 ..= 1.30).
+    /// Font scaling multiplier (0.80 ..= 1.40).
     pub font_scale: f32,
     /// UI language (`"zh"` or `"en"`).
     pub language: String,
@@ -90,7 +92,7 @@ pub struct GuiSettings {
     pub sound_effect_enabled: bool,
     /// Sound effect asset name.
     pub sound_effect_name: String,
-    /// Sound index (1..=5).
+    /// Sound index (1..=6).
     #[serde(default = "default_sound_idx")]
     pub copy_sound_index: usize,
     /// Whether to play sound on copy.
@@ -104,6 +106,21 @@ pub struct GuiSettings {
     pub global_summon_hotkey: String,
     /// Whether the home stats overview banner is visible.
     pub show_stats_overview: bool,
+    /// Whether to watch catalog files automatically.
+    #[serde(default = "default_true")]
+    pub auto_watch_catalog: bool,
+    /// Persisted favorite knowledge item IDs.
+    #[serde(default)]
+    pub favorite_ids: Vec<String>,
+    /// Persisted custom tags per item ID.
+    #[serde(default)]
+    pub custom_tags: BTreeMap<String, Vec<String>>,
+    /// User-created filter tags.
+    #[serde(default)]
+    pub user_tags: Vec<String>,
+    /// Visible category filter kinds in the top filter bar.
+    #[serde(default = "default_visible_kinds")]
+    pub visible_kinds: Vec<ItemKind>,
     /// Window width in points.
     pub window_width: f32,
     /// Window height in points.
@@ -114,9 +131,18 @@ pub struct GuiSettings {
     pub last_pos_y: Option<f32>,
 }
 
-const fn default_sound_idx() -> usize { 1 }
-const fn default_true() -> bool { true }
-fn default_hotkey() -> String { "Alt+Space".to_string() }
+const fn default_sound_idx() -> usize {
+    1
+}
+const fn default_true() -> bool {
+    true
+}
+fn default_hotkey() -> String {
+    "Alt+Space".to_string()
+}
+fn default_visible_kinds() -> Vec<ItemKind> {
+    ItemKind::ALL.to_vec()
+}
 
 impl Default for GuiSettings {
     fn default() -> Self {
@@ -138,6 +164,11 @@ impl Default for GuiSettings {
             paste_on_select: true,
             global_summon_hotkey: "Alt+Space".to_string(),
             show_stats_overview: true,
+            auto_watch_catalog: true,
+            favorite_ids: Vec::new(),
+            custom_tags: BTreeMap::new(),
+            user_tags: Vec::new(),
+            visible_kinds: default_visible_kinds(),
             window_width: 525.0,
             window_height: 525.0,
             last_pos_x: None,
@@ -153,10 +184,14 @@ impl GuiSettings {
         let path = project_root().join(GUI_SETTINGS_FILE);
         if path.is_file()
             && let Ok(content) = fs::read_to_string(&path)
-                && let Ok(settings) = serde_json::from_str::<Self>(&content) {
-                    return settings;
-                }
-        Self::default()
+            && let Ok(settings) = serde_json::from_str::<Self>(&content)
+        {
+            super::i18n::set_language(&settings.language);
+            return settings;
+        }
+        let def = Self::default();
+        super::i18n::set_language(&def.language);
+        def
     }
 
     /// Persist GUI settings to disk.
@@ -168,5 +203,65 @@ impl GuiSettings {
         let json = serde_json::to_string_pretty(self)
             .map_err(|e| format!("序列化 GUI 配置失败: {e}"))?;
         fs::write(&path, json).map_err(|e| format!("写入 GUI 配置文件失败: {e}"))
+    }
+
+    /// Check whether an item ID is marked as favorite.
+    #[must_use]
+    pub fn is_favorite(&self, id: &str) -> bool {
+        self.favorite_ids.iter().any(|x| x == id)
+    }
+
+    /// Toggle favorite status for an item ID and return the new status.
+    pub fn toggle_favorite(&mut self, id: &str) -> bool {
+        if let Some(pos) = self.favorite_ids.iter().position(|x| x == id) {
+            self.favorite_ids.remove(pos);
+            false
+        } else {
+            self.favorite_ids.push(id.to_string());
+            true
+        }
+    }
+
+    /// Check whether a category filter chip is enabled.
+    #[must_use]
+    pub fn is_kind_visible(&self, kind: ItemKind) -> bool {
+        self.visible_kinds.contains(&kind)
+    }
+
+    /// Set whether a category filter chip is enabled.
+    pub fn set_kind_visible(&mut self, kind: ItemKind, visible: bool) {
+        if visible {
+            if !self.visible_kinds.contains(&kind) {
+                self.visible_kinds.push(kind);
+            }
+        } else {
+            self.visible_kinds.retain(|&k| k != kind);
+        }
+    }
+
+    /// Add a user-created tag if not already present.
+    pub fn add_user_tag(&mut self, tag: &str) {
+        let trimmed = tag.trim();
+        if !trimmed.is_empty() && !self.user_tags.iter().any(|t| t == trimmed) {
+            self.user_tags.push(trimmed.to_string());
+        }
+    }
+
+    /// Save custom tags for a specific item ID.
+    pub fn set_item_tags(&mut self, id: &str, tags: Vec<String>) {
+        for t in &tags {
+            self.add_user_tag(t);
+        }
+        self.custom_tags.insert(id.to_string(), tags);
+    }
+
+    /// Merge base item tags with any persisted custom tags for `id`.
+    #[must_use]
+    pub fn merged_item_tags(&self, id: &str, base_tags: &[String]) -> Vec<String> {
+        if let Some(custom) = self.custom_tags.get(id) {
+            custom.clone()
+        } else {
+            base_tags.to_vec()
+        }
     }
 }

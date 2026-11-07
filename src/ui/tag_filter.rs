@@ -27,20 +27,28 @@ pub fn tag_filter_view(
 
     let filters = store.filters;
     let items = store.items;
+    let settings = store.settings;
 
-    // Aggregate unique tags from all items
-    let mut all_tags = std::collections::BTreeSet::new();
-    for it in items.get_untracked() {
-        for t in it.tags {
-            all_tags.insert(t);
+    let get_all_tags = move || {
+        let mut all_tags = std::collections::BTreeSet::new();
+        for preset in ["rust", "skills", "books", "mcp", "xerj", "prompt", "docs"] {
+            all_tags.insert(preset.to_string());
         }
-    }
-    // Also add common system tags
-    all_tags.insert("rust".to_string());
-    all_tags.insert("skills".to_string());
-    all_tags.insert("books".to_string());
-    all_tags.insert("mcp".to_string());
-    all_tags.insert("xerj".to_string());
+        for u in settings.get().user_tags {
+            all_tags.insert(u);
+        }
+        for active in filters.get().tags {
+            all_tags.insert(active);
+        }
+        for it in items.get() {
+            for t in it.tags {
+                if !t.contains('/') {
+                    all_tags.insert(t);
+                }
+            }
+        }
+        all_tags.into_iter().collect::<Vec<_>>()
+    };
 
     let new_tag_name = signal(String::new());
 
@@ -109,12 +117,14 @@ pub fn tag_filter_view(
                             .on_press(move || {
                                 let tag = new_tag_name.get().trim().to_string();
                                 if !tag.is_empty() {
+                                    store.update_settings(|s| s.add_user_tag(&tag));
                                     filters.update(|f| {
                                         if !f.tags.contains(&tag) {
                                             f.tags.push(tag.clone());
                                         }
                                     });
                                     new_tag_name.set(String::new());
+                                    store.show_toast(format!("已添加并筛选标签 #{tag}"));
                                 }
                             })
                             .child(
@@ -135,31 +145,36 @@ pub fn tag_filter_view(
                             .flex_row()
                             .flex_wrap()
                             .gap(px(6.0))
-                            .children(all_tags.into_iter().map(|tag| {
-                                let tag_bg = tag.clone();
-                                let tag_tx = tag.clone();
-                                let tag_click = tag.clone();
-                                view()
-                                    .px(px(8.0))
-                                    .py(px(4.0))
-                                    .rounded(px(4.0))
-                                    .bg(move || if filters.get().tags.contains(&tag_bg) { accent } else { divider })
-                                    .cursor_pointer()
-                                    .on_press(move || {
-                                        filters.update(|f| {
-                                            if let Some(pos) = f.tags.iter().position(|x| x == &tag_click) {
-                                                f.tags.remove(pos);
-                                            } else {
-                                                f.tags.push(tag_click.clone());
-                                            }
-                                        });
-                                    })
-                                    .child(
-                                        text(format!("#{tag}"))
-                                            .text_color(move || if filters.get().tags.contains(&tag_tx) { rgb(0xffffff) } else { text_2 })
-                                            .text_xs(),
-                                    )
-                            })),
+                            .child(each(
+                                get_all_tags,
+                                |tag: &String| tag.clone(),
+                                move |tag_sig, _| {
+                                    let tag = tag_sig.get();
+                                    let tag_bg = tag.clone();
+                                    let tag_tx = tag.clone();
+                                    let tag_click = tag.clone();
+                                    view()
+                                        .px(px(8.0))
+                                        .py(px(4.0))
+                                        .rounded(px(4.0))
+                                        .bg(move || if filters.get().tags.contains(&tag_bg) { accent } else { divider })
+                                        .cursor_pointer()
+                                        .on_press(move || {
+                                            filters.update(|f| {
+                                                if let Some(pos) = f.tags.iter().position(|x| x == &tag_click) {
+                                                    f.tags.remove(pos);
+                                                } else {
+                                                    f.tags.push(tag_click.clone());
+                                                }
+                                            });
+                                        })
+                                        .child(
+                                            text(format!("#{tag}"))
+                                                .text_color(move || if filters.get().tags.contains(&tag_tx) { rgb(0xffffff) } else { text_2 })
+                                                .text_xs(),
+                                        )
+                                },
+                            )),
                     ),
             )
             // Clear & Done

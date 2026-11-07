@@ -29,18 +29,30 @@ pub fn titlebar_view(
         let next = !is_pinned.get_untracked();
         is_pinned.set(next);
         crate::platform::window_frame::set_always_on_top(next);
+        store.show_toast(if next { "已开启窗口置顶" } else { "已取消窗口置顶" });
     };
 
     let toggle_stats = move || {
-        show_stats.update(|v| *v = !*v);
+        let next = !show_stats.get_untracked();
+        show_stats.set(next);
+        store.update_settings(|s| s.show_stats_overview = next);
     };
 
     let toggle_fav = move || {
-        filters.update(|f| f.favorites_only = !f.favorites_only);
+        let mut next = false;
+        filters.update(|f| {
+            f.favorites_only = !f.favorites_only;
+            next = f.favorites_only;
+        });
+        store.show_toast(if next { "已筛选：仅看收藏" } else { "已显示全部条目" });
     };
 
     let open_settings = move || {
-        store.active_view.set(ActiveView::Settings(0));
+        if matches!(store.active_view.get_untracked(), ActiveView::Settings(_)) {
+            store.active_view.set(ActiveView::ClipboardList);
+        } else {
+            store.active_view.set(ActiveView::Settings(0));
+        }
     };
 
     view()
@@ -160,7 +172,13 @@ pub fn titlebar_view(
                                 )
                                 .child(
                                     when(
-                                        move || matches!(update_phase.get(), crate::services::update::UpdatePhase::UpdateAvailable),
+                                        move || {
+                                            matches!(
+                                                update_phase.get(),
+                                                crate::services::update::UpdatePhase::UpdateAvailable
+                                                    | crate::services::update::UpdatePhase::Available(_)
+                                            )
+                                        },
                                         move || {
                                             view()
                                                 .absolute()

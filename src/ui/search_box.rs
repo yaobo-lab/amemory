@@ -8,7 +8,7 @@ use super::assets::glyphs;
 use super::components::tooltip_box;
 use super::theme::ClippiTheme;
 use crate::core::i18n_keys::I18nKey;
-use crate::state::app::{ActiveView, AppStore};
+use crate::state::app::AppStore;
 
 /// Render 28px search box and new item action button.
 pub fn search_box_view(
@@ -27,7 +27,7 @@ pub fn search_box_view(
     let is_expanded = signal(false);
 
     let open_new_item = move || {
-        store.active_view.set(ActiveView::Edit);
+        store.open_create_item();
     };
 
     view()
@@ -69,6 +69,26 @@ pub fn search_box_view(
                         .h(px(26.0))
                         .text_color(move || text_1)
                         .text_xs(),
+                )
+                .child(
+                    when(
+                        move || !query_signal.get().is_empty(),
+                        move || {
+                            view()
+                                .px(px(4.0))
+                                .cursor_pointer()
+                                .on_press(move || {
+                                    query_signal.set(String::new());
+                                    on_search(String::new());
+                                })
+                                .tooltip(tooltip_box("清空搜索关键词", theme))
+                                .child(
+                                    text("✕")
+                                        .text_color(text_3)
+                                        .text_xs(),
+                                )
+                        },
+                    ),
                 ),
         )
         // Expandable "+" Button

@@ -100,7 +100,7 @@ cmake --build --preset ssd202-debug
 
 新增或删除普通 `.c` 文件后必须重新执行 CMake 配置，因为源码列表可能只在配置阶段收集。
 
-修改分层代码后，针对本次修改范围运行：
+修改分层代码后，针对本次修改范围运行： 
 
 ```bash
 python3 .agents/skills/embedded-layer-architecture/scripts/check_architecture.py src/<changed-path>

@@ -9,10 +9,13 @@ use super::theme::ClippiTheme;
 use crate::core::i18n_keys::I18nKey;
 
 /// Render 20px action tab toolbar for a card.
+#[allow(clippy::too_many_arguments)]
 pub fn hover_toolbar_view(
-    is_favorite: bool,
+    is_favorite: impl Fn() -> bool + Copy + 'static,
     theme: ClippiTheme,
     on_copy: impl Fn() + 'static,
+    on_tag: impl Fn() + 'static,
+    on_more: impl Fn() + 'static,
     on_edit: impl Fn() + 'static,
     on_fav: impl Fn() + 'static,
     on_delete: impl Fn() + 'static,
@@ -39,12 +42,38 @@ pub fn hover_toolbar_view(
                 theme,
                 surface,
                 accent,
-                text_2,
+                move || text_2,
                 divider,
                 on_copy,
             ),
         )
-        // 2. Edit
+        // 2. Manage Tags
+        .child(
+            render_tab(
+                glyphs::TAG,
+                I18nKey::CardManageTags.text(),
+                theme,
+                surface,
+                accent,
+                move || text_2,
+                divider,
+                on_tag,
+            ),
+        )
+        // 3. More / Context Menu (Copy URI, Open Dir, etc.)
+        .child(
+            render_tab(
+                glyphs::FOLDER,
+                "更多操作 (复制URI / 打开目录)",
+                theme,
+                surface,
+                accent,
+                move || text_2,
+                divider,
+                on_more,
+            ),
+        )
+        // 4. Edit
         .child(
             render_tab(
                 glyphs::EDIT,
@@ -52,12 +81,12 @@ pub fn hover_toolbar_view(
                 theme,
                 surface,
                 accent,
-                text_2,
+                move || text_2,
                 divider,
                 on_edit,
             ),
         )
-        // 3. Favorite
+        // 5. Favorite
         .child(
             render_tab(
                 glyphs::STAR,
@@ -65,12 +94,12 @@ pub fn hover_toolbar_view(
                 theme,
                 surface,
                 fav_color,
-                if is_favorite { fav_color } else { text_2 },
+                move || if is_favorite() { fav_color } else { text_2 },
                 divider,
                 on_fav,
             ),
         )
-        // 4. Delete
+        // 6. Delete
         .child(
             render_tab(
                 glyphs::DELETE,
@@ -78,7 +107,7 @@ pub fn hover_toolbar_view(
                 theme,
                 surface,
                 danger,
-                text_2,
+                move || text_2,
                 divider,
                 on_delete,
             ),
@@ -92,7 +121,7 @@ fn render_tab(
     theme: ClippiTheme,
     bg: Rgba,
     hover_bg: Rgba,
-    text_color: Rgba,
+    text_color: impl Fn() -> Rgba + Copy + 'static,
     border_color: Rgba,
     on_press: impl Fn() + 'static,
 ) -> impl IntoElement {
@@ -115,7 +144,7 @@ fn render_tab(
         .child(
             text(icon)
                 .font_family("iconfont")
-                .text_color(move || if is_hovered.get() { rgb(0xffffff) } else { text_color })
+                .text_color(move || if is_hovered.get() { rgb(0xffffff) } else { text_color() })
                 .text_xs(),
         )
 }

@@ -10,7 +10,7 @@ use crate::state::app::AppStore;
 
 /// Render tag assignment modal dialog.
 pub fn tag_picker_view(
-    _store: AppStore,
+    store: AppStore,
     item: KnowledgeItem,
     theme: ClippiTheme,
     on_close: impl Fn() + Send + Sync + 'static,
@@ -31,10 +31,31 @@ pub fn tag_picker_view(
 
     let item_tags = signal(item.tags.clone());
     let new_tag_input = signal(String::new());
+    let settings = store.settings;
 
-    let preset_tags = vec![
-        "rust", "mcp", "prompt", "xerj", "skills", "books", "docs", "important", "todo",
-    ];
+    let get_candidate_tags = move || {
+        let mut all = std::collections::BTreeSet::new();
+        for p in [
+            "rust",
+            "mcp",
+            "prompt",
+            "xerj",
+            "skills",
+            "books",
+            "docs",
+            "important",
+            "todo",
+        ] {
+            all.insert(p.to_string());
+        }
+        for u in settings.get().user_tags {
+            all.insert(u);
+        }
+        for cur in item_tags.get() {
+            all.insert(cur);
+        }
+        all.into_iter().collect::<Vec<_>>()
+    };
 
     modal_overlay_view(
         view()
@@ -100,6 +121,7 @@ pub fn tag_picker_view(
                             .on_press(move || {
                                 let tag = new_tag_input.get().trim().to_string();
                                 if !tag.is_empty() {
+                                    store.update_settings(|s| s.add_user_tag(&tag));
                                     item_tags.update(|tags| {
                                         if !tags.contains(&tag) {
                                             tags.push(tag.clone());
@@ -126,33 +148,37 @@ pub fn tag_picker_view(
                             .flex_row()
                             .flex_wrap()
                             .gap(px(6.0))
-                            .children(preset_tags.into_iter().map(|preset| {
-                                let preset_str = preset.to_string();
-                                let preset_clone = preset_str.clone();
-                                let preset_tc = preset_str.clone();
-                                let preset_click = preset_str.clone();
+                            .child(each(
+                                get_candidate_tags,
+                                |preset: &String| preset.clone(),
+                                move |preset_sig, _| {
+                                    let preset_str = preset_sig.get();
+                                    let preset_clone = preset_str.clone();
+                                    let preset_tc = preset_str.clone();
+                                    let preset_click = preset_str.clone();
 
-                                view()
-                                    .px(px(8.0))
-                                    .py(px(4.0))
-                                    .rounded(px(4.0))
-                                    .bg(move || if item_tags.get().contains(&preset_clone) { accent } else { divider })
-                                    .cursor_pointer()
-                                    .on_press(move || {
-                                        item_tags.update(|tags| {
-                                            if let Some(pos) = tags.iter().position(|t| t == &preset_click) {
-                                                tags.remove(pos);
-                                            } else {
-                                                tags.push(preset_click.clone());
-                                            }
-                                        });
-                                    })
-                                    .child(
-                                        text(format!("#{preset_str}"))
-                                            .text_color(move || if item_tags.get().contains(&preset_tc) { rgb(0xffffff) } else { text_2 })
-                                            .text_xs(),
-                                    )
-                            })),
+                                    view()
+                                        .px(px(8.0))
+                                        .py(px(4.0))
+                                        .rounded(px(4.0))
+                                        .bg(move || if item_tags.get().contains(&preset_clone) { accent } else { divider })
+                                        .cursor_pointer()
+                                        .on_press(move || {
+                                            item_tags.update(|tags| {
+                                                if let Some(pos) = tags.iter().position(|t| t == &preset_click) {
+                                                    tags.remove(pos);
+                                                } else {
+                                                    tags.push(preset_click.clone());
+                                                }
+                                            });
+                                        })
+                                        .child(
+                                            text(format!("#{preset_str}"))
+                                                .text_color(move || if item_tags.get().contains(&preset_tc) { rgb(0xffffff) } else { text_2 })
+                                                .text_xs(),
+                                        )
+                                },
+                            )),
                     ),
             )
             // Save & Close
@@ -171,8 +197,18 @@ pub fn tag_picker_view(
                             .bg(accent)
                             .cursor_pointer()
                             .on_press(move || {
+                                let new_tags = item_tags.get();
                                 let mut updated = item.clone();
-                                updated.tags = item_tags.get();
+                                updated.tags.clone_from(&new_tags);
+                                store.update_settings(|s| {
+                                    s.set_item_tags(&updated.id, new_tags.clone());
+                                });
+                                let target_id = updated.id.clone();
+                                store.items.update(|list| {
+                                    if let Some(it) = list.iter_mut().find(|x| x.id == target_id) {
+                                        it.tags.clone_from(&new_tags);
+                                    }
+                                });
                                 on_updated(updated);
                                 close_btn2();
                             })

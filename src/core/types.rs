@@ -78,6 +78,15 @@ impl ItemKind {
     }
 }
 
+/// A single file inside a multi-file Skill or Book directory.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SubFileEntry {
+    /// Forward-slash relative path inside the Skill/Book (e.g. `SKILL.md`, `references/architecture.md`).
+    pub relative_path: String,
+    /// Full UTF-8 text content of this file.
+    pub content: String,
+}
+
 /// A single row in the knowledge list (Clippi's "clipboard card" equivalent).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct KnowledgeItem {
@@ -121,6 +130,9 @@ pub struct KnowledgeItem {
     /// Alias for favorite.
     #[serde(default)]
     pub is_favorite: bool,
+    /// Multi-level files belonging to this Skill or Book.
+    #[serde(default)]
+    pub sub_files: Vec<SubFileEntry>,
 }
 
 impl KnowledgeItem {

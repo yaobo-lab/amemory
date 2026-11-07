@@ -23,13 +23,31 @@ pub fn stats_overview_view(store: AppStore, theme: ClippiTheme) -> impl IntoElem
     let filters = store.filters;
 
     let filter_skills = move || {
-        filters.update(|f| f.kind = Some(ItemKind::Skill));
+        filters.update(|f| {
+            f.kind = if f.kind == Some(ItemKind::Skill) {
+                None
+            } else {
+                Some(ItemKind::Skill)
+            };
+        });
     };
     let filter_books = move || {
-        filters.update(|f| f.kind = Some(ItemKind::Book));
+        filters.update(|f| {
+            f.kind = if f.kind == Some(ItemKind::Book) {
+                None
+            } else {
+                Some(ItemKind::Book)
+            };
+        });
     };
     let filter_memory = move || {
-        filters.update(|f| f.kind = Some(ItemKind::Memory));
+        filters.update(|f| {
+            f.kind = if f.kind == Some(ItemKind::Memory) {
+                None
+            } else {
+                Some(ItemKind::Memory)
+            };
+        });
     };
 
     view()

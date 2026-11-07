@@ -145,4 +145,25 @@ impl ClippiTheme {
             }
         }
     }
+
+    /// Resolve theme from user setting mode and optional custom hex accent color.
+    #[must_use]
+    pub fn resolve_with_accent(mode: ThemeMode, accent_hex: Option<&str>) -> Self {
+        let mut theme = Self::resolve(mode);
+        if let Some(hex) = accent_hex
+            && let Some(parsed) = parse_hex_rgb(hex)
+        {
+            theme.accent = rgb(parsed);
+        }
+        theme
+    }
+}
+
+fn parse_hex_rgb(hex: &str) -> Option<u32> {
+    let trimmed = hex.trim().trim_start_matches('#');
+    if trimmed.len() == 6 {
+        u32::from_str_radix(trimmed, 16).ok()
+    } else {
+        None
+    }
 }

@@ -54,6 +54,24 @@ impl AppConfig {
         read_config_default(cfg_file).map_err(|e| eyre!("加载配置文件 `{cfg_file}` 失败: {e}"))
     }
 
+    /// Persist [`AppConfig`] to `path` (defaulting to [`DEFAULT_CONFIG_PATH`]) in TOML format.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if serialization or file writing fails.
+    pub fn save(&self, path: Option<&str>) -> Result<()> {
+        let cfg_file = path.unwrap_or(DEFAULT_CONFIG_PATH);
+        let full_path = crate::core::paths::resolve_relative(Path::new(cfg_file));
+        if let Some(parent) = full_path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| eyre!("创建配置目录 `{}` 失败: {e}", parent.display()))?;
+        }
+        let toml_str = toml::to_string_pretty(self)
+            .map_err(|e| eyre!("序列化配置为 TOML 失败: {e}"))?;
+        std::fs::write(&full_path, toml_str)
+            .map_err(|e| eyre!("写入配置文件 `{}` 失败: {e}", full_path.display()))
+    }
+
     /// Validate configuration invariants and convert into runtime settings.
     ///
     /// # Errors

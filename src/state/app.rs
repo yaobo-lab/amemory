@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use nsh_core::prelude::*;
 
+use crate::config::AppConfig;
 use crate::core::filters::FilterCriteria;
 use crate::core::settings::GuiSettings;
 use crate::core::types::{KnowledgeItem, StatsSnapshot};
@@ -102,6 +103,16 @@ pub struct AppStore {
     pub editing_item: Signal<Option<KnowledgeItem>>,
     /// Persisted GUI settings.
     pub settings: Signal<GuiSettings>,
+    /// Runtime application config (`etc/config.toml`).
+    pub app_config: Signal<AppConfig>,
+    /// Whether the tag filter & management modal is visible.
+    pub show_tag_filter: Signal<bool>,
+    /// Whether the category filter type config modal is visible.
+    pub show_type_config: Signal<bool>,
+    /// Current item whose tags are being edited in the Tag Picker modal.
+    pub tag_picking_item: Signal<Option<KnowledgeItem>>,
+    /// Current item whose context action menu is open.
+    pub context_menu_item: Signal<Option<KnowledgeItem>>,
 }
 
 impl Default for AppStore {
@@ -115,6 +126,7 @@ impl AppStore {
     #[must_use]
     pub fn new() -> Self {
         let loaded_settings = GuiSettings::load();
+        let loaded_config = AppConfig::load(None).unwrap_or_default();
         Self {
             active_view: signal(ActiveView::ClipboardList),
             search_query: signal(String::new()),
@@ -133,12 +145,82 @@ impl AppStore {
             is_syncing: signal(false),
             editing_item: signal(None),
             settings: signal(loaded_settings),
+            app_config: signal(loaded_config),
+            show_tag_filter: signal(false),
+            show_type_config: signal(false),
+            tag_picking_item: signal(None),
+            context_menu_item: signal(None),
         }
     }
 
-    /// Set displayed items list.
-    pub fn set_items(&self, items: Vec<KnowledgeItem>) {
+    /// Set displayed items list, enriching items with persisted favorites and custom tags.
+    pub fn set_items(&self, mut items: Vec<KnowledgeItem>) {
+        let settings = self.settings.get_untracked();
+        for item in &mut items {
+            let fav = settings.is_favorite(&item.id) || settings.is_favorite(&item.uri) || item.favorite;
+            item.favorite = fav;
+            item.is_favorite = fav;
+            item.tags = settings.merged_item_tags(&item.id, &item.tags);
+        }
         self.items.set(items);
+    }
+
+    /// Update GUI settings and persist to `etc/gui_settings.json`.
+    pub fn update_settings(&self, f: impl FnOnce(&mut GuiSettings)) {
+        let mut snapshot = None;
+        self.settings.update(|s| {
+            f(s);
+            snapshot = Some(s.clone());
+        });
+        if let Some(s) = snapshot {
+            crate::core::i18n::set_language(&s.language);
+            let _ = s.save();
+        }
+    }
+
+    /// Update application configuration and persist to `etc/config.toml`.
+    pub fn update_app_config(&self, f: impl FnOnce(&mut AppConfig)) {
+        let mut snapshot = None;
+        self.app_config.update(|cfg| {
+            f(cfg);
+            snapshot = Some(cfg.clone());
+        });
+        if let Some(cfg) = snapshot {
+            let _ = cfg.save(None);
+        }
+    }
+
+    /// Toggle favorite status for an item and persist to `etc/gui_settings.json`.
+    pub fn toggle_item_favorite(&self, item_id: &str) -> bool {
+        let mut next_fav = false;
+        self.update_settings(|s| {
+            next_fav = s.toggle_favorite(item_id);
+        });
+        let target_id = item_id.to_string();
+        self.items.update(|list| {
+            if let Some(it) = list.iter_mut().find(|x| x.id == target_id) {
+                it.favorite = next_fav;
+                it.is_favorite = next_fav;
+            }
+        });
+        next_fav
+    }
+
+    /// Build the current MCP HTTP endpoint URL from `app_config`.
+    #[must_use]
+    pub fn mcp_endpoint_url(&self) -> String {
+        let cfg = self.app_config.get();
+        let host = if cfg.server.host == "0.0.0.0" {
+            "127.0.0.1"
+        } else {
+            cfg.server.host.trim()
+        };
+        let path = if cfg.server.endpoint_path.starts_with('/') {
+            cfg.server.endpoint_path
+        } else {
+            format!("/{}", cfg.server.endpoint_path)
+        };
+        format!("http://{host}:{}{path}", cfg.server.port)
     }
 
     /// Set system stats snapshot.
@@ -221,6 +303,7 @@ impl AppStore {
     /// Height in logical pixels for card rows in the knowledge list.
     #[must_use]
     pub fn card_height(&self) -> f32 {
-        self.settings.get().card_height_mode.height_px()
+        let s = self.settings.get();
+        (s.card_height_mode.height_px() * s.font_scale.clamp(0.8, 1.4)).round()
     }
 }

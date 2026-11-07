@@ -8,27 +8,32 @@ use super::hover_toolbar::hover_toolbar_view;
 use super::theme::ClippiTheme;
 use crate::core::search::highlight_text;
 use crate::core::types::{ItemKind, KnowledgeItem};
+use crate::state::app::AppStore;
 
-/// Render single knowledge/memory item card.
-#[allow(clippy::needless_pass_by_value)]
+/// Render single knowledge/memory item card with reactive selection and favorite state.
+#[allow(clippy::needless_pass_by_value, clippy::too_many_arguments)]
 pub fn knowledge_card_view(
-    item: KnowledgeItem,
-    is_selected: bool,
-    search_query: String,
-    card_height: f32,
+    store: AppStore,
+    item_sig: Signal<KnowledgeItem>,
+    is_selected: impl Fn() -> bool + Copy + 'static,
+    search_query: Signal<String>,
     theme: ClippiTheme,
     on_select: impl Fn() + 'static,
     on_copy: impl Fn() + Send + Sync + 'static,
+    on_tag: impl Fn() + Send + Sync + 'static,
+    on_more: impl Fn() + Send + Sync + 'static,
     on_edit: impl Fn() + Send + Sync + 'static,
     on_fav: impl Fn() + Send + Sync + 'static,
     on_delete: impl Fn() + Send + Sync + 'static,
 ) -> impl IntoElement {
     let on_copy = std::sync::Arc::new(on_copy);
+    let on_tag = std::sync::Arc::new(on_tag);
+    let on_more = std::sync::Arc::new(on_more);
     let on_edit = std::sync::Arc::new(on_edit);
     let on_fav = std::sync::Arc::new(on_fav);
     let on_delete = std::sync::Arc::new(on_delete);
 
-    let is_fav = item.favorite;
+    let item = item_sig.get();
 
     let surface = theme.surface;
     let divider = theme.divider;
@@ -51,22 +56,23 @@ pub fn knowledge_card_view(
         ItemKind::Note => (glyphs::NOTE, "NOTE"),
     };
 
-    let title_display = if item.title.is_empty() {
-        item.uri.clone()
-    } else {
-        item.title.clone()
-    };
-
-    let query = search_query;
+    let query = search_query.get();
     let snippet_spans = highlight_text(&item.preview, &query);
+    let extra_tags: Vec<String> = item
+        .tags
+        .iter()
+        .filter(|t| !t.starts_with("skill:") && !t.starts_with("book:") && !t.contains('/'))
+        .take(3)
+        .cloned()
+        .collect();
 
     view()
-        .h(px(card_height))
+        .h(move || px(store.card_height()))
         .w_full()
         .rounded(px(10.0))
         .bg(surface)
         .border(px(1.0))
-        .border_color(if is_selected { accent } else { divider })
+        .border_color(move || if is_selected() { accent } else { divider })
         .cursor_pointer()
         .flex_row()
         .overflow_hidden()
@@ -78,7 +84,7 @@ pub fn knowledge_card_view(
             view()
                 .w(px(3.0))
                 .h_full()
-                .bg(if item.favorite { fav_color } else { divider }),
+                .bg(move || if item_sig.get().favorite { fav_color } else { divider }),
         )
         // Left type column (36px)
         .child(
@@ -91,7 +97,7 @@ pub fn knowledge_card_view(
                 .child(
                     text(icon)
                         .font_family("iconfont")
-                        .text_color(if is_selected { accent } else { text_2 })
+                        .text_color(move || if is_selected() { accent } else { text_2 })
                         .text_sm(),
                 )
                 .child(
@@ -115,15 +121,26 @@ pub fn knowledge_card_view(
                         .items_center()
                         .justify_between()
                         .child(
-                            text(title_display)
-                                .text_color(text_1)
-                                .font_weight(FontWeight::BOLD)
-                                .text_xs(),
+                            text(move || {
+                                let cur = item_sig.get();
+                                if cur.title.is_empty() {
+                                    cur.uri
+                                } else {
+                                    cur.title
+                                }
+                            })
+                            .text_color(text_1)
+                            .font_weight(FontWeight::BOLD)
+                            .text_xs(),
                         )
                         .child(
-                            item.score.map_or_else(view, |s| {
-                                view().child(text(format!("{s:.1}")).text_color(accent).text_xs())
-                            }),
+                            when(
+                                move || item_sig.get().score.is_some(),
+                                move || {
+                                    let s = item_sig.get().score.unwrap_or(0.0);
+                                    view().child(text(format!("{s:.2}")).text_color(accent).text_xs())
+                                },
+                            ),
                         ),
                 )
                 // Middle row: Preview snippet with keyword highlight
@@ -140,7 +157,7 @@ pub fn knowledge_card_view(
                                 .text_xs()
                         })),
                 )
-                // Bottom row: Info capsules
+                // Bottom row: Info capsules & clickable tag pills
                 .child(
                     view()
                         .h(px(18.0))
@@ -153,7 +170,14 @@ pub fn knowledge_card_view(
                                 .py(px(1.0))
                                 .rounded(px(3.0))
                                 .bg(tag_bg)
-                                .child(text(item.owner.clone()).text_color(tag_text).text_xs()),
+                                .child(
+                                    text(move || {
+                                        let o = item_sig.get().owner;
+                                        if o.is_empty() { "default".to_string() } else { o }
+                                    })
+                                    .text_color(tag_text)
+                                    .text_xs(),
+                                ),
                         )
                         .child(
                             if item.part_total > 1 {
@@ -170,7 +194,28 @@ pub fn knowledge_card_view(
                             } else {
                                 view()
                             },
-                        ),
+                        )
+                        .children(extra_tags.into_iter().map(move |t_str| {
+                            let click_t = t_str.clone();
+                            view()
+                                .px(px(4.0))
+                                .py(px(1.0))
+                                .rounded(px(3.0))
+                                .bg(tag_bg)
+                                .cursor_pointer()
+                                .on_press(move || {
+                                    store.filters.update(|f| {
+                                        if !f.tags.contains(&click_t) {
+                                            f.tags.push(click_t.clone());
+                                        }
+                                    });
+                                })
+                                .child(
+                                    text(format!("#{t_str}"))
+                                        .text_color(accent)
+                                        .text_xs(),
+                                )
+                        })),
                 ),
         )
         // Hover toolbar
@@ -179,13 +224,17 @@ pub fn knowledge_card_view(
                 move || is_hovered.get(),
                 move || {
                     let c_copy = on_copy.clone();
+                    let c_tag = on_tag.clone();
+                    let c_more = on_more.clone();
                     let c_edit = on_edit.clone();
                     let c_fav = on_fav.clone();
                     let c_del = on_delete.clone();
                     hover_toolbar_view(
-                        is_fav,
+                        move || item_sig.get().favorite,
                         theme,
                         move || c_copy(),
+                        move || c_tag(),
+                        move || c_more(),
                         move || c_edit(),
                         move || c_fav(),
                         move || c_del(),

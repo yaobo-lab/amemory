@@ -49,6 +49,20 @@ pub fn replace_all(text: &str, query: &str, replacement: &str) -> (String, usize
     (out, count, first)
 }
 
+/// Replace only the first match of `query` in `text`. Returns the updated text and whether a match was replaced.
+#[must_use]
+pub fn replace_first(text: &str, query: &str, replacement: &str) -> (String, bool) {
+    let set = find_matches(text, query);
+    let Some(first_range) = set.ranges.first() else {
+        return (text.to_string(), false);
+    };
+    let mut out = String::with_capacity(text.len() + replacement.len());
+    out.push_str(&text[..first_range.start]);
+    out.push_str(replacement);
+    out.push_str(&text[first_range.end..]);
+    (out, true)
+}
+
 /// Index of the first match at or after `offset`, wrapping to `0`.
 #[must_use]
 pub fn index_at_or_after(ranges: &[Range<usize>], offset: usize) -> usize {

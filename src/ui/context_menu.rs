@@ -1,10 +1,68 @@
-//! 184px Right-click context menu matching Clippi 1:1.
+//! 200px Right-click / More actions context menu matching Clippi 1:1.
 
 use nsh_core::prelude::*;
 
 use super::assets::glyphs;
+use super::components::modal_overlay::modal_overlay_view;
 use super::theme::ClippiTheme;
 use crate::core::i18n_keys::I18nKey;
+
+/// Render context menu modal dialog with full item actions.
+#[allow(clippy::too_many_arguments)]
+pub fn context_menu_modal(
+    title: String,
+    theme: ClippiTheme,
+    on_copy: impl Fn() + 'static,
+    on_copy_uri: impl Fn() + 'static,
+    on_manage_tags: impl Fn() + 'static,
+    on_open_dir: impl Fn() + 'static,
+    on_edit: impl Fn() + 'static,
+    on_fav: impl Fn() + 'static,
+    on_delete: impl Fn() + 'static,
+    on_close: impl Fn() + 'static,
+) -> impl IntoElement {
+    let surface = theme.surface;
+    let divider = theme.divider;
+    let btn_hover = theme.btn_hover;
+    let text_1 = theme.text_1;
+    let text_3 = theme.text_3;
+    let danger = theme.danger;
+
+    modal_overlay_view(
+        view()
+            .w(px(210.0))
+            .p(px(6.0))
+            .rounded(px(8.0))
+            .bg(surface)
+            .border_1()
+            .border_color(divider)
+            .flex_col()
+            .gap(px(2.0))
+            .child(
+                view()
+                    .px(px(8.0))
+                    .py(px(4.0))
+                    .child(
+                        text(title)
+                            .text_color(text_3)
+                            .font_weight(FontWeight::BOLD)
+                            .text_xs(),
+                    ),
+            )
+            .child(view().h(px(1.0)).my(px(2.0)).bg(divider))
+            .child(render_menu_item(glyphs::COPY, I18nKey::CardCopyContent.text(), "Ctrl+C", text_1, btn_hover, on_copy))
+            .child(render_menu_item(glyphs::COPY, I18nKey::CardCopyUri.text(), "Ctrl+U", text_1, btn_hover, on_copy_uri))
+            .child(render_menu_item(glyphs::TAG, I18nKey::CardManageTags.text(), "Ctrl+T", text_1, btn_hover, on_manage_tags))
+            .child(render_menu_item(glyphs::FOLDER, I18nKey::CardOpenDir.text(), "Ctrl+O", text_1, btn_hover, on_open_dir))
+            .child(view().h(px(1.0)).my(px(2.0)).bg(divider))
+            .child(render_menu_item(glyphs::EDIT, I18nKey::CardEditItem.text(), "Ctrl+E", text_1, btn_hover, on_edit))
+            .child(render_menu_item(glyphs::STAR, I18nKey::CardFavorite.text(), "Ctrl+F", text_1, btn_hover, on_fav))
+            .child(view().h(px(1.0)).my(px(2.0)).bg(divider))
+            .child(render_menu_item(glyphs::DELETE, I18nKey::CardDelete.text(), "Del", danger, btn_hover, on_delete)),
+        theme,
+        on_close,
+    )
+}
 
 /// Render 184px right-click context menu box.
 pub fn context_menu_box(
