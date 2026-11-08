@@ -1,4 +1,4 @@
-﻿//! Keyboard shortcut badge bubble.
+//! Keyboard shortcut badge bubble.
 
 use nsh_core::prelude::*;
 
@@ -12,9 +12,5 @@ pub fn shortcut_badge(key_label: &'static str, theme: ClippiTheme) -> impl IntoE
         .py(px(1.0))
         .rounded(px(3.0))
         .bg(theme.divider)
-        .child(
-            text(key_label)
-                .text_color(theme.text_3)
-                .text_xs(),
-        )
+        .child(text(key_label).text_color(theme.text_3).text_xs())
 }

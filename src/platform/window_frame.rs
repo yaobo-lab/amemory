@@ -34,4 +34,36 @@ pub fn set_always_on_top(pinned: bool) {
     } else {
         set_level(WindowLevel::Normal);
     }
+
+    #[cfg(target_os = "windows")]
+    {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
+            FindWindowW, SetWindowPos, HWND_NOTOPMOST, HWND_TOPMOST, SWP_NOMOVE, SWP_NOSIZE,
+        };
+        let title: Vec<u16> = "amemory\0".encode_utf16().collect();
+        unsafe {
+            let hwnd = FindWindowW(std::ptr::null(), title.as_ptr());
+            if hwnd != 0 {
+                let insert_after = if pinned { HWND_TOPMOST } else { HWND_NOTOPMOST };
+                SetWindowPos(hwnd, insert_after, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+            }
+        }
+    }
+}
+
+/// Hide or minimize the application window to background.
+pub fn hide_app_window() {
+    #[cfg(target_os = "windows")]
+    {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
+            FindWindowW, ShowWindow, SW_MINIMIZE,
+        };
+        let title: Vec<u16> = "amemory\0".encode_utf16().collect();
+        unsafe {
+            let hwnd = FindWindowW(std::ptr::null(), title.as_ptr());
+            if hwnd != 0 {
+                ShowWindow(hwnd, SW_MINIMIZE);
+            }
+        }
+    }
 }

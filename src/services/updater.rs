@@ -58,11 +58,7 @@ impl AppUpdater {
     /// Asynchronously check GitHub releases and update the store's phase.
     pub async fn check_and_update_state(store: AppStore) {
         store.set_update_phase(UpdatePhase::Checking);
-        let checker = UpdateChecker::new(
-            env!("CARGO_PKG_VERSION"),
-            "xcat",
-            "amemory",
-        );
+        let checker = UpdateChecker::new(env!("CARGO_PKG_VERSION"), "xcat", "amemory");
         match checker.check_github().await {
             Ok(Some(info)) => {
                 store.set_update_phase(UpdatePhase::Available(info.clone()));

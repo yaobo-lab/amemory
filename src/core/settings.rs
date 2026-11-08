@@ -200,8 +200,8 @@ impl GuiSettings {
         if let Some(parent) = path.parent() {
             let _ = fs::create_dir_all(parent);
         }
-        let json = serde_json::to_string_pretty(self)
-            .map_err(|e| format!("序列化 GUI 配置失败: {e}"))?;
+        let json =
+            serde_json::to_string_pretty(self).map_err(|e| format!("序列化 GUI 配置失败: {e}"))?;
         fs::write(&path, json).map_err(|e| format!("写入 GUI 配置文件失败: {e}"))
     }
 
@@ -258,10 +258,8 @@ impl GuiSettings {
     /// Merge base item tags with any persisted custom tags for `id`.
     #[must_use]
     pub fn merged_item_tags(&self, id: &str, base_tags: &[String]) -> Vec<String> {
-        if let Some(custom) = self.custom_tags.get(id) {
-            custom.clone()
-        } else {
-            base_tags.to_vec()
-        }
+        self.custom_tags
+            .get(id)
+            .map_or_else(|| base_tags.to_vec(), Clone::clone)
     }
 }

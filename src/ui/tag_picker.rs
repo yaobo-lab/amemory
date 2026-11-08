@@ -84,11 +84,7 @@ pub fn tag_picker_view(
                             .on_press(move || {
                                 close_btn1();
                             })
-                            .child(
-                                text("✕")
-                                    .text_color(text_3)
-                                    .text_xs(),
-                            ),
+                            .child(text("✕").text_color(text_3).text_xs()),
                     ),
             )
             // Add custom tag input
@@ -139,48 +135,52 @@ pub fn tag_picker_view(
                     ),
             )
             // Tag chips
-            .child(
-                scroll()
-                    .w_full()
-                    .max_h(px(160.0))
-                    .child(
-                        view()
-                            .flex_row()
-                            .flex_wrap()
-                            .gap(px(6.0))
-                            .child(each(
-                                get_candidate_tags,
-                                |preset: &String| preset.clone(),
-                                move |preset_sig, _| {
-                                    let preset_str = preset_sig.get();
-                                    let preset_clone = preset_str.clone();
-                                    let preset_tc = preset_str.clone();
-                                    let preset_click = preset_str.clone();
+            .child(scroll().w_full().max_h(px(160.0)).child(
+                view().flex_row().flex_wrap().gap(px(6.0)).child(each(
+                    get_candidate_tags,
+                    |preset: &String| preset.clone(),
+                    move |preset_sig, _| {
+                        let preset_str = preset_sig.get();
+                        let preset_clone = preset_str.clone();
+                        let preset_tc = preset_str.clone();
+                        let preset_click = preset_str.clone();
 
-                                    view()
-                                        .px(px(8.0))
-                                        .py(px(4.0))
-                                        .rounded(px(4.0))
-                                        .bg(move || if item_tags.get().contains(&preset_clone) { accent } else { divider })
-                                        .cursor_pointer()
-                                        .on_press(move || {
-                                            item_tags.update(|tags| {
-                                                if let Some(pos) = tags.iter().position(|t| t == &preset_click) {
-                                                    tags.remove(pos);
-                                                } else {
-                                                    tags.push(preset_click.clone());
-                                                }
-                                            });
-                                        })
-                                        .child(
-                                            text(format!("#{preset_str}"))
-                                                .text_color(move || if item_tags.get().contains(&preset_tc) { rgb(0xffffff) } else { text_2 })
-                                                .text_xs(),
-                                        )
-                                },
-                            )),
-                    ),
-            )
+                        view()
+                            .px(px(8.0))
+                            .py(px(4.0))
+                            .rounded(px(4.0))
+                            .bg(move || {
+                                if item_tags.get().contains(&preset_clone) {
+                                    accent
+                                } else {
+                                    divider
+                                }
+                            })
+                            .cursor_pointer()
+                            .on_press(move || {
+                                item_tags.update(|tags| {
+                                    if let Some(pos) = tags.iter().position(|t| t == &preset_click)
+                                    {
+                                        tags.remove(pos);
+                                    } else {
+                                        tags.push(preset_click.clone());
+                                    }
+                                });
+                            })
+                            .child(
+                                text(format!("#{preset_str}"))
+                                    .text_color(move || {
+                                        if item_tags.get().contains(&preset_tc) {
+                                            rgb(0xffffff)
+                                        } else {
+                                            text_2
+                                        }
+                                    })
+                                    .text_xs(),
+                            )
+                    },
+                )),
+            ))
             // Save & Close
             .child(
                 view()

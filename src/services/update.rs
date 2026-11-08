@@ -1,7 +1,7 @@
 //! Update checker resolving releases from GitHub Releases or custom mirror.
 
-use toolkit_rs::chrono::{DateTime, Duration as ChronoDuration, Utc};
 use serde::Deserialize;
+use toolkit_rs::chrono::{DateTime, Duration as ChronoDuration, Utc};
 
 use crate::core::i18n_keys::I18nKey;
 
@@ -116,14 +116,20 @@ pub fn is_safe_asset_name(name: &str) -> bool {
 pub fn open_releases_page(url: &str) {
     #[cfg(target_os = "windows")]
     {
-        
         use windows_sys::Win32::UI::Shell::ShellExecuteW;
         use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 
         let op: Vec<u16> = "open\0".encode_utf16().collect();
         let wide_url: Vec<u16> = url.encode_utf16().chain(std::iter::once(0)).collect();
         unsafe {
-            ShellExecuteW(0, op.as_ptr(), wide_url.as_ptr(), std::ptr::null(), std::ptr::null(), SW_SHOWNORMAL);
+            ShellExecuteW(
+                0,
+                op.as_ptr(),
+                wide_url.as_ptr(),
+                std::ptr::null(),
+                std::ptr::null(),
+                SW_SHOWNORMAL,
+            );
         }
     }
     #[cfg(not(target_os = "windows"))]
@@ -209,7 +215,9 @@ impl UpdateChecker {
             std::path::Path::new(&a.name)
                 .extension()
                 .and_then(std::ffi::OsStr::to_str)
-                .is_some_and(|ext| ext.eq_ignore_ascii_case("exe") || ext.eq_ignore_ascii_case("zip"))
+                .is_some_and(|ext| {
+                    ext.eq_ignore_ascii_case("exe") || ext.eq_ignore_ascii_case("zip")
+                })
         });
 
         if let Some(asset) = asset {

@@ -130,13 +130,19 @@ mod tests {
     fn matches_are_literal_and_ignore_case() {
         let r: Vec<_> = find_matches("Hello HELLO hello", "hello").ranges;
         assert_eq!(r, vec![0..5, 6..11, 12..17]);
-        assert_eq!(find_matches("工作_计划_工作", "_").ranges, vec![6..7, 13..14]);
+        assert_eq!(
+            find_matches("工作_计划_工作", "_").ranges,
+            vec![6..7, 13..14]
+        );
     }
 
     #[test]
     #[allow(clippy::single_range_in_vec_init)]
     fn replace_all_rewrites_matches() {
-        assert_eq!(replace_all("one_two_three", "_", " "), ("one two three".into(), 2, Some(3)));
+        assert_eq!(
+            replace_all("one_two_three", "_", " "),
+            ("one two three".into(), 2, Some(3))
+        );
         assert_eq!(index_at_or_after(&[0..1, 4..5], 2), 1);
         let single = [0..1];
         assert_eq!(index_at_or_after(&single, 9), 0);

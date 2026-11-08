@@ -74,7 +74,9 @@ pub fn edit_panel_view(
 
     let initial_file_idx = initial_files
         .iter()
-        .position(|f| !initial_item.relative_path.is_empty() && f.relative_path == initial_item.relative_path)
+        .position(|f| {
+            !initial_item.relative_path.is_empty() && f.relative_path == initial_item.relative_path
+        })
         .unwrap_or(0);
 
     let initial_content = initial_files
@@ -156,8 +158,28 @@ pub fn edit_panel_view(
                         .cursor_pointer()
                         .on_press(move || {
                             let mut item = initial_item.clone();
-                            item.title = draft_title.get();
                             let current_txt = draft_content.get();
+                            let raw_title = draft_title.get();
+                            let cur_kind = draft_kind.get();
+
+                            let resolved_title = if raw_title.trim().is_empty() {
+                                let first_line = current_txt
+                                    .lines()
+                                    .find(|l| !l.trim().is_empty())
+                                    .unwrap_or("未命名条目");
+                                let clean = first_line
+                                    .trim_start_matches(['#', ' ', '-'])
+                                    .trim();
+                                if clean.is_empty() {
+                                    format!("新建{}", cur_kind.label())
+                                } else {
+                                    clean.chars().take(24).collect()
+                                }
+                            } else {
+                                raw_title.trim().to_string()
+                            };
+
+                            item.title = resolved_title;
                             let idx = active_file_idx.get();
                             draft_files.update(|files| {
                                 if let Some(slot) = files.get_mut(idx) {
@@ -171,7 +193,7 @@ pub fn edit_panel_view(
                                 item.content = current_txt;
                             }
                             item.sub_files = updated_files;
-                            item.kind = draft_kind.get();
+                            item.kind = cur_kind;
                             item.tags = draft_tags
                                 .get()
                                 .split(',')
@@ -508,9 +530,8 @@ pub fn edit_panel_view(
         // ── 5.5 Multi-level File Tree / Tabs (when item has sub-files like SKILL.md, references/*, scripts/*) ──
         .child(
             when(
-                move || !draft_files.get().is_empty(),
+                move || !draft_files.get().is_empty() || matches!(draft_kind.get(), ItemKind::Skill | ItemKind::Book),
                 move || {
-                    let files = draft_files.get();
                     view()
                         .px(px(10.0))
                         .pb(px(6.0))
@@ -522,10 +543,34 @@ pub fn edit_panel_view(
                                 .items_center()
                                 .justify_between()
                                 .child(
-                                    text(format!("多级文件列表 ({} 个文件):", files.len()))
-                                        .text_color(text_3)
-                                        .font_weight(FontWeight::BOLD)
-                                        .text_xs(),
+                                    view()
+                                        .flex_row()
+                                        .items_center()
+                                        .gap(px(6.0))
+                                        .child(
+                                            text(move || format!("多级文件列表 ({} 个文件):", draft_files.get().len()))
+                                                .text_color(text_3)
+                                                .font_weight(FontWeight::BOLD)
+                                                .text_xs(),
+                                        )
+                                        .child(
+                                            view()
+                                                .px(px(6.0))
+                                                .py(px(1.0))
+                                                .rounded(px(4.0))
+                                                .bg(accent_soft)
+                                                .border(px(1.0))
+                                                .border_color(accent)
+                                                .cursor_pointer()
+                                                .on_press(move || {
+                                                    new_subfile_open.update(|v| *v = !*v);
+                                                })
+                                                .child(
+                                                    text("＋添加子文件")
+                                                        .text_color(accent)
+                                                        .text_xs(),
+                                                ),
+                                        ),
                                 )
                                 .child(
                                     text(move || {
@@ -545,6 +590,76 @@ pub fn edit_panel_view(
                                 ),
                         )
                         .child(
+                            when(
+                                move || new_subfile_open.get(),
+                                move || {
+                                    view()
+                                        .flex_row()
+                                        .items_center()
+                                        .gap(px(6.0))
+                                        .child(
+                                            input()
+                                                .value(move || new_subfile_path.get())
+                                                .on_change(move |v: &str| new_subfile_path.set(v.to_string()))
+                                                .placeholder("输入子文件相对路径，如: references/guide.md 或 chapters/01.md")
+                                                .flex_1()
+                                                .h(px(22.0))
+                                                .rounded(px(4.0))
+                                                .border(px(1.0))
+                                                .border_color(input_border)
+                                                .bg(card_bg)
+                                                .text_xs()
+                                                .text_color(text_1),
+                                        )
+                                        .child(
+                                            view()
+                                                .px(px(8.0))
+                                                .py(px(2.0))
+                                                .rounded(px(4.0))
+                                                .bg(accent)
+                                                .cursor_pointer()
+                                                .on_press(move || {
+                                                    let raw_p = new_subfile_path.get().trim().replace('\\', "/");
+                                                    if !raw_p.is_empty() {
+                                                        let prev_idx = active_file_idx.get_untracked();
+                                                        let cur_txt = draft_content.get_untracked();
+                                                        let mut new_idx = 0;
+                                                        draft_files.update(|list| {
+                                                            if let Some(slot) = list.get_mut(prev_idx) {
+                                                                slot.content = cur_txt;
+                                                            }
+                                                            if let Some(pos) = list.iter().position(|x| x.relative_path == raw_p) {
+                                                                new_idx = pos;
+                                                            } else {
+                                                                list.push(SubFileEntry {
+                                                                    relative_path: raw_p.clone(),
+                                                                    content: format!("# {raw_p}\n\n"),
+                                                                });
+                                                                new_idx = list.len() - 1;
+                                                            }
+                                                        });
+                                                        let next_txt = draft_files
+                                                            .get_untracked()
+                                                            .get(new_idx)
+                                                            .map(|f| f.content.clone())
+                                                            .unwrap_or_default();
+                                                        active_file_idx.set(new_idx);
+                                                        draft_content.set(next_txt);
+                                                        new_subfile_path.set(String::new());
+                                                        new_subfile_open.set(false);
+                                                        store.show_toast(format!("已切换到子文件: {raw_p}"));
+                                                    }
+                                                })
+                                                .child(
+                                                    text("确定添加")
+                                                        .text_color(rgb(0xffffff))
+                                                        .text_xs(),
+                                                ),
+                                        )
+                                },
+                            ),
+                        )
+                        .child(
                             scroll()
                                 .horizontal()
                                 .w_full()
@@ -552,68 +667,75 @@ pub fn edit_panel_view(
                                     view()
                                         .flex_row()
                                         .gap(px(4.0))
-                                        .children(files.into_iter().enumerate().map(move |(idx, sf)| {
-                                            let path_label = sf.relative_path.clone();
-                                            let path_tip = sf.relative_path;
-                                            let file_icon = if path_label.starts_with("scripts/") {
-                                                glyphs::SCRIPT
-                                            } else if path_label.starts_with("references/") || path_label.starts_with("notes/") {
-                                                glyphs::NOTE
-                                            } else if path_label == "BOOK.md" || path_label.starts_with("chapters/") {
-                                                glyphs::BOOK
-                                            } else {
-                                                glyphs::SKILL
-                                            };
+                                        .child(each(
+                                            move || draft_files.get(),
+                                            |sf: &SubFileEntry| sf.relative_path.clone(),
+                                            move |sf_sig, idx_sig| {
+                                                let sf = sf_sig.get();
+                                                let idx = idx_sig.get();
+                                                let path_label = sf.relative_path.clone();
+                                                let path_tip = sf.relative_path;
+                                                let file_icon = if path_label.starts_with("scripts/") {
+                                                    glyphs::SCRIPT
+                                                } else if path_label.starts_with("references/") || path_label.starts_with("notes/") {
+                                                    glyphs::NOTE
+                                                } else if path_label == "BOOK.md" || path_label.starts_with("chapters/") {
+                                                    glyphs::BOOK
+                                                } else {
+                                                    glyphs::SKILL
+                                                };
 
-                                            view()
-                                                .h(px(24.0))
-                                                .px(px(8.0))
-                                                .rounded(px(5.0))
-                                                .bg(move || if active_file_idx.get() == idx { accent_soft } else { card_bg })
-                                                .border(px(1.0))
-                                                .border_color(move || if active_file_idx.get() == idx { accent } else { divider })
-                                                .flex_row()
-                                                .items_center()
-                                                .gap(px(4.0))
-                                                .cursor_pointer()
-                                                .tooltip(tooltip_box(format!("切换查看/编辑: {path_tip}"), theme))
-                                                .on_press(move || {
-                                                    let prev_idx = active_file_idx.get_untracked();
-                                                    if prev_idx != idx {
-                                                        let current_txt = draft_content.get_untracked();
-                                                        draft_files.update(|list| {
-                                                            if let Some(slot) = list.get_mut(prev_idx) {
-                                                                slot.content = current_txt;
-                                                            }
-                                                        });
-                                                        let next_txt = draft_files
-                                                            .get_untracked()
-                                                            .get(idx)
-                                                            .map(|f| f.content.clone())
-                                                            .unwrap_or_default();
-                                                        active_file_idx.set(idx);
-                                                        draft_content.set(next_txt);
-                                                    }
-                                                })
-                                                .child(
-                                                    text(file_icon)
-                                                        .font_family("iconfont")
-                                                        .text_color(move || if active_file_idx.get() == idx { accent } else { text_2 })
-                                                        .text_xs(),
-                                                )
-                                                .child(
-                                                    text(path_label)
-                                                        .text_color(move || if active_file_idx.get() == idx { accent } else { text_1 })
-                                                        .font_weight(FontWeight::MEDIUM)
-                                                        .text_xs(),
-                                                )
-                                        })),
+                                                view()
+                                                    .h(px(24.0))
+                                                    .px(px(8.0))
+                                                    .rounded(px(5.0))
+                                                    .bg(move || if active_file_idx.get() == idx_sig.get() { accent_soft } else { card_bg })
+                                                    .border(px(1.0))
+                                                    .border_color(move || if active_file_idx.get() == idx_sig.get() { accent } else { divider })
+                                                    .flex_row()
+                                                    .items_center()
+                                                    .gap(px(4.0))
+                                                    .cursor_pointer()
+                                                    .tooltip(tooltip_box(format!("切换查看/编辑: {path_tip}"), theme))
+                                                    .on_press(move || {
+                                                        let target_idx = idx_sig.get_untracked();
+                                                        let prev_idx = active_file_idx.get_untracked();
+                                                        if prev_idx != target_idx {
+                                                            let current_txt = draft_content.get_untracked();
+                                                            draft_files.update(|list| {
+                                                                if let Some(slot) = list.get_mut(prev_idx) {
+                                                                    slot.content = current_txt;
+                                                                }
+                                                            });
+                                                            let next_txt = draft_files
+                                                                .get_untracked()
+                                                                .get(target_idx)
+                                                                .map(|f| f.content.clone())
+                                                                .unwrap_or_default();
+                                                            active_file_idx.set(target_idx);
+                                                            draft_content.set(next_txt);
+                                                        }
+                                                    })
+                                                    .child(
+                                                        text(file_icon)
+                                                            .font_family("iconfont")
+                                                            .text_color(move || if active_file_idx.get() == idx { accent } else { text_2 })
+                                                            .text_xs(),
+                                                    )
+                                                    .child(
+                                                        text(path_label)
+                                                            .text_color(move || if active_file_idx.get() == idx { accent } else { text_1 })
+                                                            .font_weight(FontWeight::MEDIUM)
+                                                            .text_xs(),
+                                                    )
+                                            },
+                                        )),
                                 ),
                         )
                 },
             ),
         )
-        // ── 6. Multiline Content Editor ──
+        // ── 6. Multiline Content Editor or Live Preview ──
         .child(
             view()
                 .flex_1()
@@ -622,38 +744,47 @@ pub fn edit_panel_view(
                 .flex_col()
                 .gap(px(6.0))
                 .child(
-                    input()
-                        .multiline(true)
-                        .scrollbar(true)
-                        .value(move || draft_content.get())
-                        .on_change(move |v: &str| {
-                            let val = v.to_string();
-                            draft_content.set(val.clone());
-                            let idx = active_file_idx.get_untracked();
-                            draft_files.update(|list| {
-                                if let Some(slot) = list.get_mut(idx) {
-                                    slot.content = val;
-                                }
-                            });
-                        })
-                        .placeholder(I18nKey::EditContentPlaceholder.text())
-                        .w_full()
-                        .flex_1()
-                        .rounded(px(6.0))
-                        .border(px(1.0))
-                        .border_color(input_border)
-                        .bg(card_bg)
-                        .p(px(8.0))
-                        .text_xs()
-                        .text_color(text_1),
+                    when(
+                        move || preview_open.get(),
+                        move || rich_preview_view(&draft_content.get(), theme),
+                    )
+                    .otherwise(move || {
+                        input()
+                            .multiline(true)
+                            .scrollbar(true)
+                            .value(move || draft_content.get())
+                            .on_change(move |v: &str| {
+                                let val = v.to_string();
+                                draft_content.set(val.clone());
+                                let idx = active_file_idx.get_untracked();
+                                draft_files.update(|list| {
+                                    if let Some(slot) = list.get_mut(idx) {
+                                        slot.content = val;
+                                    }
+                                });
+                            })
+                            .placeholder(I18nKey::EditContentPlaceholder.text())
+                            .w_full()
+                            .flex_1()
+                            .rounded(px(6.0))
+                            .border(px(1.0))
+                            .border_color(input_border)
+                            .bg(card_bg)
+                            .p(px(8.0))
+                            .text_xs()
+                            .text_color(text_1)
+                    }),
                 ),
         )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn type_chip(
     label: &'static str,
     target_kind: ItemKind,
     current_kind: Signal<ItemKind>,
+    draft_files: Signal<Vec<SubFileEntry>>,
+    draft_content: Signal<String>,
     accent: nsh_core::prelude::Rgba,
     divider: nsh_core::prelude::Rgba,
     text_color: nsh_core::prelude::Rgba,
@@ -662,14 +793,39 @@ fn type_chip(
         .px(px(6.0))
         .py(px(2.0))
         .rounded(px(4.0))
-        .bg(move || if current_kind.get() == target_kind { accent } else { divider })
+        .bg(move || {
+            if current_kind.get() == target_kind {
+                accent
+            } else {
+                divider
+            }
+        })
         .cursor_pointer()
         .on_press(move || {
             current_kind.set(target_kind);
+            if matches!(target_kind, ItemKind::Skill | ItemKind::Book)
+                && draft_files.get_untracked().is_empty()
+            {
+                let primary_name = if target_kind == ItemKind::Skill {
+                    "SKILL.md"
+                } else {
+                    "BOOK.md"
+                };
+                draft_files.set(vec![SubFileEntry {
+                    relative_path: primary_name.to_string(),
+                    content: draft_content.get_untracked(),
+                }]);
+            }
         })
         .child(
             text(label)
-                .text_color(move || if current_kind.get() == target_kind { rgb(0xffffff) } else { text_color })
+                .text_color(move || {
+                    if current_kind.get() == target_kind {
+                        rgb(0xffffff)
+                    } else {
+                        text_color
+                    }
+                })
                 .text_xs(),
         )
 }

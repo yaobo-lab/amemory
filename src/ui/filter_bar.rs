@@ -32,12 +32,36 @@ pub fn filter_bar_view(
 
     let kinds = [
         (None, I18nKey::FilterAll.text(), glyphs::ALL),
-        (Some(ItemKind::Skill), I18nKey::FilterSkill.text(), glyphs::SKILL),
-        (Some(ItemKind::Book), I18nKey::FilterBook.text(), glyphs::BOOK),
-        (Some(ItemKind::Document), I18nKey::FilterDocument.text(), glyphs::DOCUMENT),
-        (Some(ItemKind::Memory), I18nKey::FilterMemory.text(), glyphs::MEMORY),
-        (Some(ItemKind::Script), I18nKey::FilterScript.text(), glyphs::SCRIPT),
-        (Some(ItemKind::Note), I18nKey::FilterNote.text(), glyphs::NOTE),
+        (
+            Some(ItemKind::Skill),
+            I18nKey::FilterSkill.text(),
+            glyphs::SKILL,
+        ),
+        (
+            Some(ItemKind::Book),
+            I18nKey::FilterBook.text(),
+            glyphs::BOOK,
+        ),
+        (
+            Some(ItemKind::Document),
+            I18nKey::FilterDocument.text(),
+            glyphs::DOCUMENT,
+        ),
+        (
+            Some(ItemKind::Memory),
+            I18nKey::FilterMemory.text(),
+            glyphs::MEMORY,
+        ),
+        (
+            Some(ItemKind::Script),
+            I18nKey::FilterScript.text(),
+            glyphs::SCRIPT,
+        ),
+        (
+            Some(ItemKind::Note),
+            I18nKey::FilterNote.text(),
+            glyphs::NOTE,
+        ),
     ];
 
     let toggle_sidebar = move || {
@@ -74,15 +98,31 @@ pub fn filter_bar_view(
                                 .gap(px(4.0))
                                 .children(kinds.into_iter().map(move |(k, label, icon)| {
                                     when(
-                                        move || k.is_none_or(|kind_val| settings.get().is_kind_visible(kind_val)),
+                                        move || {
+                                            k.is_none_or(|kind_val| {
+                                                settings.get().is_kind_visible(kind_val)
+                                            })
+                                        },
                                         move || {
                                             view()
                                                 .h(px(22.0))
                                                 .px(px(6.0))
                                                 .rounded(px(5.0))
-                                                .bg(move || if filters.get().kind == k { accent_soft } else { surface })
+                                                .bg(move || {
+                                                    if filters.get().kind == k {
+                                                        accent_soft
+                                                    } else {
+                                                        surface
+                                                    }
+                                                })
                                                 .border(px(1.0))
-                                                .border_color(move || if filters.get().kind == k { accent } else { divider })
+                                                .border_color(move || {
+                                                    if filters.get().kind == k {
+                                                        accent
+                                                    } else {
+                                                        divider
+                                                    }
+                                                })
                                                 .flex_row()
                                                 .items_center()
                                                 .gap(px(4.0))
@@ -99,16 +139,31 @@ pub fn filter_bar_view(
                                                     });
                                                     on_type_changed(next_k);
                                                 })
-                                                .tooltip(tooltip_box(format!("按「{label}」分类筛选"), theme))
+                                                .tooltip(tooltip_box(
+                                                    format!("按「{label}」分类筛选"),
+                                                    theme,
+                                                ))
                                                 .child(
                                                     text(icon)
                                                         .font_family("iconfont")
-                                                        .text_color(move || if filters.get().kind == k { accent } else { text_2 })
+                                                        .text_color(move || {
+                                                            if filters.get().kind == k {
+                                                                accent
+                                                            } else {
+                                                                text_2
+                                                            }
+                                                        })
                                                         .text_xs(),
                                                 )
                                                 .child(
                                                     text(label)
-                                                        .text_color(move || if filters.get().kind == k { accent } else { text_2 })
+                                                        .text_color(move || {
+                                                            if filters.get().kind == k {
+                                                                accent
+                                                            } else {
+                                                                text_2
+                                                            }
+                                                        })
                                                         .font_weight(FontWeight::MEDIUM)
                                                         .text_xs(),
                                                 )
@@ -130,9 +185,21 @@ pub fn filter_bar_view(
                                 .w(px(24.0))
                                 .h(px(22.0))
                                 .rounded(px(5.0))
-                                .bg(move || if is_sidebar_open.get() || !filters.get().tags.is_empty() { accent_soft } else { surface })
+                                .bg(move || {
+                                    if is_sidebar_open.get() || !filters.get().tags.is_empty() {
+                                        accent_soft
+                                    } else {
+                                        surface
+                                    }
+                                })
                                 .border(px(1.0))
-                                .border_color(move || if is_sidebar_open.get() || !filters.get().tags.is_empty() { accent } else { divider })
+                                .border_color(move || {
+                                    if is_sidebar_open.get() || !filters.get().tags.is_empty() {
+                                        accent
+                                    } else {
+                                        divider
+                                    }
+                                })
                                 .items_center()
                                 .justify_center()
                                 .cursor_pointer()
@@ -141,7 +208,15 @@ pub fn filter_bar_view(
                                 .child(
                                     text(glyphs::TAG)
                                         .font_family("iconfont")
-                                        .text_color(move || if is_sidebar_open.get() || !filters.get().tags.is_empty() { accent } else { text_2 })
+                                        .text_color(move || {
+                                            if is_sidebar_open.get()
+                                                || !filters.get().tags.is_empty()
+                                            {
+                                                accent
+                                            } else {
+                                                text_2
+                                            }
+                                        })
                                         .text_xs(),
                                 ),
                         )
@@ -206,33 +281,31 @@ pub fn filter_bar_view(
                         .flex_row()
                         .items_center()
                         .gap(px(4.0))
-                        .child(
-                            when(
-                                move || !filters.get().tags.is_empty(),
-                                move || {
-                                    let count = filters.get().tags.len();
-                                    view()
-                                        .h(px(18.0))
-                                        .px(px(6.0))
-                                        .rounded(px(4.0))
-                                        .bg(accent_soft)
-                                        .border(px(1.0))
-                                        .border_color(accent)
-                                        .items_center()
-                                        .justify_center()
-                                        .cursor_pointer()
-                                        .on_press(move || {
-                                            filters.update(|f| f.tags.clear());
-                                        })
-                                        .tooltip(tooltip_box("点击清空已选标签过滤", theme))
-                                        .child(
-                                            text(format!("已选 {count} 标签 ✕"))
-                                                .text_color(accent)
-                                                .text_xs(),
-                                        )
-                                },
-                            ),
-                        )
+                        .child(when(
+                            move || !filters.get().tags.is_empty(),
+                            move || {
+                                let count = filters.get().tags.len();
+                                view()
+                                    .h(px(18.0))
+                                    .px(px(6.0))
+                                    .rounded(px(4.0))
+                                    .bg(accent_soft)
+                                    .border(px(1.0))
+                                    .border_color(accent)
+                                    .items_center()
+                                    .justify_center()
+                                    .cursor_pointer()
+                                    .on_press(move || {
+                                        filters.update(|f| f.tags.clear());
+                                    })
+                                    .tooltip(tooltip_box("点击清空已选标签过滤", theme))
+                                    .child(
+                                        text(format!("已选 {count} 标签 ✕"))
+                                            .text_color(accent)
+                                            .text_xs(),
+                                    )
+                            },
+                        ))
                         .child(
                             view()
                                 .h(px(18.0))
@@ -246,11 +319,7 @@ pub fn filter_bar_view(
                                 .cursor_pointer()
                                 .on_press(open_tag_modal)
                                 .tooltip(tooltip_box("打开标签过滤与新建面板", theme))
-                                .child(
-                                    text("🏷️ 标签管理")
-                                        .text_color(text_3)
-                                        .text_xs(),
-                                ),
+                                .child(text("🏷️ 标签管理").text_color(text_3).text_xs()),
                         ),
                 ),
         )
@@ -273,9 +342,21 @@ fn render_mode_chip(
         .h(px(18.0))
         .px(px(6.0))
         .rounded(px(4.0))
-        .bg(move || if filters.get().search_mode == mode { accent_soft } else { surface })
+        .bg(move || {
+            if filters.get().search_mode == mode {
+                accent_soft
+            } else {
+                surface
+            }
+        })
         .border(px(1.0))
-        .border_color(move || if filters.get().search_mode == mode { accent } else { divider })
+        .border_color(move || {
+            if filters.get().search_mode == mode {
+                accent
+            } else {
+                divider
+            }
+        })
         .items_center()
         .justify_center()
         .cursor_pointer()
@@ -285,7 +366,13 @@ fn render_mode_chip(
         })
         .child(
             text(label)
-                .text_color(move || if filters.get().search_mode == mode { theme.accent } else { theme.text_3 })
+                .text_color(move || {
+                    if filters.get().search_mode == mode {
+                        theme.accent
+                    } else {
+                        theme.text_3
+                    }
+                })
                 .text_xs(),
         )
 }

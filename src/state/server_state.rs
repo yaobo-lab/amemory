@@ -1,7 +1,5 @@
 //! Server runtime state and background service metrics.
 
-
-
 use crate::core::types::StatsSnapshot;
 use crate::services::update::UpdatePhase;
 

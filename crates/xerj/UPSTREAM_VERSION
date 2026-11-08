@@ -1,0 +1,13 @@
+# XERJ Upstream Tracking Metadata
+# This file tracks the upstream repository, tag, and commit for crates/xerj.
+
+repository = "https://github.com/xerj-org/xerj"
+tag = "v1.0.0-rc.101"
+commit = "83c9f0d123bac010a25ca2cf02ff093b08ee68ce"
+fetched_at = "2026-04-16T00:00:00Z"
+license = "Apache-2.0"
+patch_series = "patches"
+
+# Applied Patches:
+# 1. patches/0001-expose-mcp-provider.patch -> engine/crates/xerj-mcp (exposes McpProvider)
+# 2. patches/0002-expose-server-bootstrap.patch -> engine/crates/xerj-server (exposes in-process lib.rs)

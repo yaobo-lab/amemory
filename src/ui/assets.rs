@@ -1,7 +1,7 @@
 //! Static assets: font glyphs, icons, and image definitions.
 
-use std::sync::OnceLock;
 use base64::prelude::*;
+use std::sync::OnceLock;
 
 /// Embedded PNG bytes of the application logo without text.
 pub const LOGO_NOTEXT_PNG_BYTES: &[u8] = include_bytes!("../../assets/LOGO_notext.png");
@@ -17,7 +17,10 @@ pub const ICONFONT_TTF_BYTES: &[u8] = include_bytes!("../../assets/fonts/iconfon
 pub fn logo_notext_data_uri() -> &'static str {
     static URI: OnceLock<String> = OnceLock::new();
     URI.get_or_init(|| {
-        format!("data:image/png;base64,{}", BASE64_STANDARD.encode(LOGO_NOTEXT_PNG_BYTES))
+        format!(
+            "data:image/png;base64,{}",
+            BASE64_STANDARD.encode(LOGO_NOTEXT_PNG_BYTES)
+        )
     })
 }
 

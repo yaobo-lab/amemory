@@ -30,7 +30,7 @@ pub fn is_system_dark_mode() -> bool {
 fn read_windows_accent_color() -> Option<String> {
     use std::ptr::null_mut;
     use windows_sys::Win32::System::Registry::{
-        RegCloseKey, RegOpenKeyExW, RegQueryValueExW, HKEY_CURRENT_USER, KEY_READ, REG_DWORD,
+        HKEY_CURRENT_USER, KEY_READ, REG_DWORD, RegCloseKey, RegOpenKeyExW, RegQueryValueExW,
     };
 
     let subkey = windows_sys::core::w!("Software\\Microsoft\\Windows\\DWM");
@@ -69,10 +69,11 @@ fn read_windows_accent_color() -> Option<String> {
 fn read_windows_is_dark() -> bool {
     use std::ptr::null_mut;
     use windows_sys::Win32::System::Registry::{
-        RegCloseKey, RegOpenKeyExW, RegQueryValueExW, HKEY_CURRENT_USER, KEY_READ, REG_DWORD,
+        HKEY_CURRENT_USER, KEY_READ, REG_DWORD, RegCloseKey, RegOpenKeyExW, RegQueryValueExW,
     };
 
-    let subkey = windows_sys::core::w!("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize");
+    let subkey =
+        windows_sys::core::w!("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize");
     let mut hkey = std::mem::MaybeUninit::uninit();
     unsafe {
         if RegOpenKeyExW(HKEY_CURRENT_USER, subkey, 0, KEY_READ, hkey.as_mut_ptr()) != 0 {

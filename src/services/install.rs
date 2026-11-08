@@ -35,14 +35,28 @@ pub fn launch_prepared_update(installer_path: &Path) -> Result<(), String> {
         use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 
         let op: Vec<u16> = "open\0".encode_utf16().collect();
-        let exe: Vec<u16> = installer_path.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+        let exe: Vec<u16> = installer_path
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
         let dir: Option<Vec<u16>> = installer_path.parent().map(|d| {
-            d.as_os_str().encode_wide().chain(std::iter::once(0)).collect()
+            d.as_os_str()
+                .encode_wide()
+                .chain(std::iter::once(0))
+                .collect()
         });
         let dir_ptr = dir.as_ref().map_or(std::ptr::null(), std::vec::Vec::as_ptr);
 
         let ret = unsafe {
-            ShellExecuteW(0, op.as_ptr(), exe.as_ptr(), std::ptr::null(), dir_ptr, SW_SHOWNORMAL)
+            ShellExecuteW(
+                0,
+                op.as_ptr(),
+                exe.as_ptr(),
+                std::ptr::null(),
+                dir_ptr,
+                SW_SHOWNORMAL,
+            )
         } as isize;
 
         if ret > 32 {

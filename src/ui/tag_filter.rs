@@ -80,11 +80,7 @@ pub fn tag_filter_view(
                             .on_press(move || {
                                 close_btn1();
                             })
-                            .child(
-                                text("✕")
-                                    .text_color(text_3)
-                                    .text_xs(),
-                            ),
+                            .child(text("✕").text_color(text_3).text_xs()),
                     ),
             )
             // Create tag row
@@ -136,47 +132,50 @@ pub fn tag_filter_view(
                     ),
             )
             // Tags Grid
-            .child(
-                scroll()
-                    .w_full()
-                    .max_h(px(160.0))
-                    .child(
+            .child(scroll().w_full().max_h(px(160.0)).child(
+                view().flex_row().flex_wrap().gap(px(6.0)).child(each(
+                    get_all_tags,
+                    |tag: &String| tag.clone(),
+                    move |tag_sig, _| {
+                        let tag = tag_sig.get();
+                        let tag_bg = tag.clone();
+                        let tag_tx = tag.clone();
+                        let tag_click = tag.clone();
                         view()
-                            .flex_row()
-                            .flex_wrap()
-                            .gap(px(6.0))
-                            .child(each(
-                                get_all_tags,
-                                |tag: &String| tag.clone(),
-                                move |tag_sig, _| {
-                                    let tag = tag_sig.get();
-                                    let tag_bg = tag.clone();
-                                    let tag_tx = tag.clone();
-                                    let tag_click = tag.clone();
-                                    view()
-                                        .px(px(8.0))
-                                        .py(px(4.0))
-                                        .rounded(px(4.0))
-                                        .bg(move || if filters.get().tags.contains(&tag_bg) { accent } else { divider })
-                                        .cursor_pointer()
-                                        .on_press(move || {
-                                            filters.update(|f| {
-                                                if let Some(pos) = f.tags.iter().position(|x| x == &tag_click) {
-                                                    f.tags.remove(pos);
-                                                } else {
-                                                    f.tags.push(tag_click.clone());
-                                                }
-                                            });
-                                        })
-                                        .child(
-                                            text(format!("#{tag}"))
-                                                .text_color(move || if filters.get().tags.contains(&tag_tx) { rgb(0xffffff) } else { text_2 })
-                                                .text_xs(),
-                                        )
-                                },
-                            )),
-                    ),
-            )
+                            .px(px(8.0))
+                            .py(px(4.0))
+                            .rounded(px(4.0))
+                            .bg(move || {
+                                if filters.get().tags.contains(&tag_bg) {
+                                    accent
+                                } else {
+                                    divider
+                                }
+                            })
+                            .cursor_pointer()
+                            .on_press(move || {
+                                filters.update(|f| {
+                                    if let Some(pos) = f.tags.iter().position(|x| x == &tag_click) {
+                                        f.tags.remove(pos);
+                                    } else {
+                                        f.tags.push(tag_click.clone());
+                                    }
+                                });
+                            })
+                            .child(
+                                text(format!("#{tag}"))
+                                    .text_color(move || {
+                                        if filters.get().tags.contains(&tag_tx) {
+                                            rgb(0xffffff)
+                                        } else {
+                                            text_2
+                                        }
+                                    })
+                                    .text_xs(),
+                            )
+                    },
+                )),
+            ))
             // Clear & Done
             .child(
                 view()
@@ -190,11 +189,7 @@ pub fn tag_filter_view(
                             .on_press(move || {
                                 filters.update(|f| f.tags.clear());
                             })
-                            .child(
-                                text("清空筛选")
-                                    .text_color(text_3)
-                                    .text_xs(),
-                            ),
+                            .child(text("清空筛选").text_color(text_3).text_xs()),
                     )
                     .child(
                         view()

@@ -9,9 +9,7 @@ use tracing::{error, info};
 use super::amemory_runtime::AmemoryRuntime;
 
 /// Synchronize all skills and books in the background.
-pub async fn run_catalog_sync(
-    runtime: Arc<AmemoryRuntime>,
-) -> Result<(SyncReport, SyncReport)> {
+pub async fn run_catalog_sync(runtime: Arc<AmemoryRuntime>) -> Result<(SyncReport, SyncReport)> {
     info!("Starting catalog synchronization...");
     match runtime.sync_all().await {
         Ok((skill_report, book_report)) => {

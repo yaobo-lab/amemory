@@ -35,83 +35,71 @@ pub fn hover_toolbar_view(
         .flex_row()
         .gap(px(2.0))
         // 1. Copy
-        .child(
-            render_tab(
-                glyphs::COPY,
-                I18nKey::CardCopyContent.text(),
-                theme,
-                surface,
-                accent,
-                move || text_2,
-                divider,
-                on_copy,
-            ),
-        )
+        .child(render_tab(
+            glyphs::COPY,
+            I18nKey::CardCopyContent.text(),
+            theme,
+            surface,
+            accent,
+            move || text_2,
+            divider,
+            on_copy,
+        ))
         // 2. Manage Tags
-        .child(
-            render_tab(
-                glyphs::TAG,
-                I18nKey::CardManageTags.text(),
-                theme,
-                surface,
-                accent,
-                move || text_2,
-                divider,
-                on_tag,
-            ),
-        )
+        .child(render_tab(
+            glyphs::TAG,
+            I18nKey::CardManageTags.text(),
+            theme,
+            surface,
+            accent,
+            move || text_2,
+            divider,
+            on_tag,
+        ))
         // 3. More / Context Menu (Copy URI, Open Dir, etc.)
-        .child(
-            render_tab(
-                glyphs::FOLDER,
-                "更多操作 (复制URI / 打开目录)",
-                theme,
-                surface,
-                accent,
-                move || text_2,
-                divider,
-                on_more,
-            ),
-        )
+        .child(render_tab(
+            glyphs::FOLDER,
+            "更多操作 (复制URI / 打开目录)",
+            theme,
+            surface,
+            accent,
+            move || text_2,
+            divider,
+            on_more,
+        ))
         // 4. Edit
-        .child(
-            render_tab(
-                glyphs::EDIT,
-                I18nKey::CardEditItem.text(),
-                theme,
-                surface,
-                accent,
-                move || text_2,
-                divider,
-                on_edit,
-            ),
-        )
+        .child(render_tab(
+            glyphs::EDIT,
+            I18nKey::CardEditItem.text(),
+            theme,
+            surface,
+            accent,
+            move || text_2,
+            divider,
+            on_edit,
+        ))
         // 5. Favorite
-        .child(
-            render_tab(
-                glyphs::STAR,
-                I18nKey::CardFavorite.text(),
-                theme,
-                surface,
-                fav_color,
-                move || if is_favorite() { fav_color } else { text_2 },
-                divider,
-                on_fav,
-            ),
-        )
+        .child(render_tab(
+            glyphs::STAR,
+            I18nKey::CardFavorite.text(),
+            theme,
+            surface,
+            fav_color,
+            move || if is_favorite() { fav_color } else { text_2 },
+            divider,
+            on_fav,
+        ))
         // 6. Delete
-        .child(
-            render_tab(
-                glyphs::DELETE,
-                I18nKey::CardDelete.text(),
-                theme,
-                surface,
-                danger,
-                move || text_2,
-                divider,
-                on_delete,
-            ),
-        )
+        .child(render_tab(
+            glyphs::DELETE,
+            I18nKey::CardDelete.text(),
+            theme,
+            surface,
+            danger,
+            move || text_2,
+            divider,
+            on_delete,
+        ))
 }
 
 #[allow(clippy::too_many_arguments, clippy::large_types_passed_by_value)]
@@ -144,7 +132,13 @@ fn render_tab(
         .child(
             text(icon)
                 .font_family("iconfont")
-                .text_color(move || if is_hovered.get() { rgb(0xffffff) } else { text_color() })
+                .text_color(move || {
+                    if is_hovered.get() {
+                        rgb(0xffffff)
+                    } else {
+                        text_color()
+                    }
+                })
                 .text_xs(),
         )
 }

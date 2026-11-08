@@ -1,4 +1,4 @@
-﻿//! Quick copy & paste logic for knowledge cards.
+//! Quick copy & paste logic for knowledge cards.
 
 use crate::core::types::KnowledgeItem;
 use crate::platform::clipboard::write_text;
@@ -6,10 +6,7 @@ use crate::services::copy_sound::play_copy_sound;
 use crate::state::app::AppStore;
 
 /// Quick paste or copy an item by index or direct item.
-pub fn execute_quick_copy(
-    store: AppStore,
-    item: &KnowledgeItem,
-) {
+pub fn execute_quick_copy(store: AppStore, item: &KnowledgeItem) {
     // 1. Write text to native system clipboard
     write_text(&item.content);
 
@@ -24,16 +21,13 @@ pub fn execute_quick_copy(
 
     // 4. Auto hide window if configured
     if store.settings.get_untracked().auto_hide_on_blur {
-        // window minimize or hide can be handled by platform
+        crate::platform::window_frame::hide_app_window();
     }
 }
 
 /// Execute quick copy for numerical shortcut (1..9).
 #[must_use]
-pub fn handle_number_shortcut(
-    store: AppStore,
-    number: usize,
-) -> bool {
+pub fn handle_number_shortcut(store: AppStore, number: usize) -> bool {
     let items = store.items.get_untracked();
     if number > 0 && number <= items.len() {
         let item = &items[number - 1];

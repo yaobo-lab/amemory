@@ -4,12 +4,16 @@ use std::path::Path;
 use std::sync::Arc;
 
 use adapter::{SearchStore, XerjAdapter};
-use domain::book::{BookCatalog, BookFileInput, BookFileUpdatePolicy, CreateBookInput, UpdateBookInput};
-use domain::memory::{
-    IndexDocument, IndexMutation, IndexTarget, MemoryChunkInput, SearchHit, SearchRequest,
-    SyncReport, build_memory_documents,
+use domain::book::{
+    BookCatalog, BookFileInput, BookFileUpdatePolicy, CreateBookInput, UpdateBookInput,
 };
-use domain::skill::{CreateSkillInput, SkillCatalog, SkillFileInput, SkillFileUpdatePolicy, UpdateSkillInput};
+use domain::memory::{
+    IndexDocument, IndexTarget, MemoryChunkInput, SearchHit, SearchRequest, SyncReport,
+    build_memory_documents,
+};
+use domain::skill::{
+    CreateSkillInput, SkillCatalog, SkillFileInput, SkillFileUpdatePolicy, UpdateSkillInput,
+};
 use eyre::{Result, WrapErr};
 use toolkit_rs::chrono::Utc;
 
@@ -77,8 +81,7 @@ impl AmemoryRuntime {
         let skills_catalog = Arc::new(SkillCatalog::new(&config.storage.skills));
         let books_catalog = Arc::new(BookCatalog::new(&config.storage.books));
         let adapter = Arc::new(
-            XerjAdapter::open(config.to_xerj_config())
-                .wrap_err("初始化 XERJ 引擎适配器失败")?,
+            XerjAdapter::open(config.to_xerj_config()).wrap_err("初始化 XERJ 引擎适配器失败")?,
         );
         Ok(Self {
             config: Arc::new(config),
@@ -181,7 +184,13 @@ impl AmemoryRuntime {
                     },
                     content: file.content.clone(),
                     description: Some(entry.description.clone()),
-                    source_path: Some(entry.root_dir.join(&file.relative_path).display().to_string()),
+                    source_path: Some(
+                        entry
+                            .root_dir
+                            .join(&file.relative_path)
+                            .display()
+                            .to_string(),
+                    ),
                     tags: vec![format!("skill:{}", entry.name), file.relative_path.clone()],
                     owner: entry.name.clone(),
                     relative_path: file.relative_path.clone(),
@@ -264,7 +273,13 @@ impl AmemoryRuntime {
                     },
                     content: file.content.clone(),
                     description: Some(entry.description.clone()),
-                    source_path: Some(entry.root_dir.join(&file.relative_path).display().to_string()),
+                    source_path: Some(
+                        entry
+                            .root_dir
+                            .join(&file.relative_path)
+                            .display()
+                            .to_string(),
+                    ),
                     tags: vec![format!("book:{}", entry.name), file.relative_path.clone()],
                     owner: entry.name.clone(),
                     relative_path: file.relative_path.clone(),
@@ -332,7 +347,11 @@ impl AmemoryRuntime {
                     id: Some(ext_id),
                     namespace: ns,
                     title: Some(it.title),
-                    uri: if it.uri.is_empty() { None } else { Some(it.uri) },
+                    uri: if it.uri.is_empty() {
+                        None
+                    } else {
+                        Some(it.uri)
+                    },
                     text: it.content,
                     tags: it.tags,
                     metadata: None,
@@ -361,9 +380,8 @@ impl AmemoryRuntime {
 
         let settings = GuiSettings::load();
         for item in &mut all {
-            let fav = settings.is_favorite(&item.id)
-                || settings.is_favorite(&item.uri)
-                || item.favorite;
+            let fav =
+                settings.is_favorite(&item.id) || settings.is_favorite(&item.uri) || item.favorite;
             item.favorite = fav;
             item.is_favorite = fav;
             item.tags = settings.merged_item_tags(&item.id, &item.tags);
@@ -385,7 +403,9 @@ impl AmemoryRuntime {
                 .find(|it| {
                     it.id == hit.doc_id
                         || (!uri_str.is_empty() && it.uri == uri_str)
-                        || (!owner.is_empty() && it.owner == owner && it.relative_path == relative_path)
+                        || (!owner.is_empty()
+                            && it.owner == owner
+                            && it.relative_path == relative_path)
                 })
                 .cloned()
             {
@@ -431,7 +451,15 @@ impl AmemoryRuntime {
         let books_list = self.books_catalog.list_summaries().unwrap_or_default();
         let books_count = books_list.len();
         let book_files_count: usize = books_list.iter().map(|b| b.file_count).sum();
-        let imported_docs_count: usize = books_list.iter().map(|b| b.imported_document_count).sum();
+        let imported_docs_count: usize = books_list
+            .iter()
+            .map(|b| {
+                b.files
+                    .iter()
+                    .filter(|f| f.starts_with("imports/") || f.starts_with("docs/"))
+                    .count()
+            })
+            .sum();
 
         let memories = self.list_memories();
         let memory_count = memories.len();
@@ -534,7 +562,11 @@ impl AmemoryRuntime {
                 .filter(|d| !d.trim().is_empty())
                 .or_else(|| {
                     let p = item.preview.trim();
-                    if p.is_empty() { None } else { Some(p.to_string()) }
+                    if p.is_empty() {
+                        None
+                    } else {
+                        Some(p.to_string())
+                    }
                 })
                 .unwrap_or_else(|| format!("{skill_name} 技能定义与提示词规范"));
 
@@ -596,7 +628,11 @@ impl AmemoryRuntime {
                 .filter(|d| !d.trim().is_empty())
                 .or_else(|| {
                     let p = item.preview.trim();
-                    if p.is_empty() { None } else { Some(p.to_string()) }
+                    if p.is_empty() {
+                        None
+                    } else {
+                        Some(p.to_string())
+                    }
                 })
                 .unwrap_or_else(|| format!("{book_name} 知识书本与参考手册"));
 
@@ -788,7 +824,9 @@ impl AmemoryRuntime {
     /// Append a memory chunk directly into XERJ.
     pub async fn add_memory_chunk(&self, chunk: MemoryChunkInput) -> Result<String> {
         let ids = self.adapter.add_memory_chunks(&[chunk]).await?;
-        ids.into_iter().next().ok_or_else(|| eyre::eyre!("写入记忆分片未返回 ID"))
+        ids.into_iter()
+            .next()
+            .ok_or_else(|| eyre::eyre!("写入记忆分片未返回 ID"))
     }
 
     /// Force flush XERJ in-memory data to disk.

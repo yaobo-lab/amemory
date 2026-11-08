@@ -39,26 +39,72 @@ pub fn context_menu_modal(
             .flex_col()
             .gap(px(2.0))
             .child(
-                view()
-                    .px(px(8.0))
-                    .py(px(4.0))
-                    .child(
-                        text(title)
-                            .text_color(text_3)
-                            .font_weight(FontWeight::BOLD)
-                            .text_xs(),
-                    ),
+                view().px(px(8.0)).py(px(4.0)).child(
+                    text(title)
+                        .text_color(text_3)
+                        .font_weight(FontWeight::BOLD)
+                        .text_xs(),
+                ),
             )
             .child(view().h(px(1.0)).my(px(2.0)).bg(divider))
-            .child(render_menu_item(glyphs::COPY, I18nKey::CardCopyContent.text(), "Ctrl+C", text_1, btn_hover, on_copy))
-            .child(render_menu_item(glyphs::COPY, I18nKey::CardCopyUri.text(), "Ctrl+U", text_1, btn_hover, on_copy_uri))
-            .child(render_menu_item(glyphs::TAG, I18nKey::CardManageTags.text(), "Ctrl+T", text_1, btn_hover, on_manage_tags))
-            .child(render_menu_item(glyphs::FOLDER, I18nKey::CardOpenDir.text(), "Ctrl+O", text_1, btn_hover, on_open_dir))
+            .child(render_menu_item(
+                glyphs::COPY,
+                I18nKey::CardCopyContent.text(),
+                "Ctrl+C",
+                text_1,
+                btn_hover,
+                on_copy,
+            ))
+            .child(render_menu_item(
+                glyphs::COPY,
+                I18nKey::CardCopyUri.text(),
+                "Ctrl+U",
+                text_1,
+                btn_hover,
+                on_copy_uri,
+            ))
+            .child(render_menu_item(
+                glyphs::TAG,
+                I18nKey::CardManageTags.text(),
+                "Ctrl+T",
+                text_1,
+                btn_hover,
+                on_manage_tags,
+            ))
+            .child(render_menu_item(
+                glyphs::FOLDER,
+                I18nKey::CardOpenDir.text(),
+                "Ctrl+O",
+                text_1,
+                btn_hover,
+                on_open_dir,
+            ))
             .child(view().h(px(1.0)).my(px(2.0)).bg(divider))
-            .child(render_menu_item(glyphs::EDIT, I18nKey::CardEditItem.text(), "Ctrl+E", text_1, btn_hover, on_edit))
-            .child(render_menu_item(glyphs::STAR, I18nKey::CardFavorite.text(), "Ctrl+F", text_1, btn_hover, on_fav))
+            .child(render_menu_item(
+                glyphs::EDIT,
+                I18nKey::CardEditItem.text(),
+                "Ctrl+E",
+                text_1,
+                btn_hover,
+                on_edit,
+            ))
+            .child(render_menu_item(
+                glyphs::STAR,
+                I18nKey::CardFavorite.text(),
+                "Ctrl+F",
+                text_1,
+                btn_hover,
+                on_fav,
+            ))
             .child(view().h(px(1.0)).my(px(2.0)).bg(divider))
-            .child(render_menu_item(glyphs::DELETE, I18nKey::CardDelete.text(), "Del", danger, btn_hover, on_delete)),
+            .child(render_menu_item(
+                glyphs::DELETE,
+                I18nKey::CardDelete.text(),
+                "Del",
+                danger,
+                btn_hover,
+                on_delete,
+            )),
         theme,
         on_close,
     )
@@ -87,13 +133,48 @@ pub fn context_menu_box(
         .border_1()
         .border_color(divider)
         .gap(px(2.0))
-        .child(render_menu_item(glyphs::COPY, I18nKey::CardCopyContent.text(), "Ctrl+C", text_1, btn_hover, on_copy))
-        .child(render_menu_item(glyphs::TAG, I18nKey::CardCopyUri.text(), "Ctrl+U", text_1, btn_hover, on_copy_uri))
+        .child(render_menu_item(
+            glyphs::COPY,
+            I18nKey::CardCopyContent.text(),
+            "Ctrl+C",
+            text_1,
+            btn_hover,
+            on_copy,
+        ))
+        .child(render_menu_item(
+            glyphs::TAG,
+            I18nKey::CardCopyUri.text(),
+            "Ctrl+U",
+            text_1,
+            btn_hover,
+            on_copy_uri,
+        ))
         .child(view().h(px(1.0)).my(px(2.0)).bg(divider))
-        .child(render_menu_item(glyphs::EDIT, I18nKey::CardEditItem.text(), "Ctrl+E", text_1, btn_hover, on_edit))
-        .child(render_menu_item(glyphs::STAR, I18nKey::CardFavorite.text(), "Ctrl+F", text_1, btn_hover, on_fav))
+        .child(render_menu_item(
+            glyphs::EDIT,
+            I18nKey::CardEditItem.text(),
+            "Ctrl+E",
+            text_1,
+            btn_hover,
+            on_edit,
+        ))
+        .child(render_menu_item(
+            glyphs::STAR,
+            I18nKey::CardFavorite.text(),
+            "Ctrl+F",
+            text_1,
+            btn_hover,
+            on_fav,
+        ))
         .child(view().h(px(1.0)).my(px(2.0)).bg(divider))
-        .child(render_menu_item(glyphs::DELETE, I18nKey::CardDelete.text(), "Del", danger, btn_hover, on_delete))
+        .child(render_menu_item(
+            glyphs::DELETE,
+            I18nKey::CardDelete.text(),
+            "Del",
+            danger,
+            btn_hover,
+            on_delete,
+        ))
 }
 
 fn render_menu_item(
@@ -119,12 +200,13 @@ fn render_menu_item(
                 .flex_row()
                 .items_center()
                 .gap(px(6.0))
-                .child(text(icon).font_family("iconfont").text_color(text_color).text_sm())
+                .child(
+                    text(icon)
+                        .font_family("iconfont")
+                        .text_color(text_color)
+                        .text_sm(),
+                )
                 .child(text(label).text_color(text_color).text_xs()),
         )
-        .child(
-            text(shortcut)
-                .text_color(text_color)
-                .text_xs(),
-        )
+        .child(text(shortcut).text_color(text_color).text_xs())
 }

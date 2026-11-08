@@ -23,28 +23,22 @@ fn compute_query_score(item: &KnowledgeItem, query: &str, mode: SearchMode) -> O
     let uri_lower = item.uri.to_lowercase();
 
     let mut lexical_score = 0.0_f32;
-    let mut matched_any = false;
-
     if title_lower.contains(&q) {
         lexical_score += 3.5;
-        matched_any = true;
     }
     if preview_lower.contains(&q) {
         lexical_score += 2.0;
-        matched_any = true;
     }
     if content_lower.contains(&q) {
         lexical_score += 1.5;
-        matched_any = true;
     }
     if uri_lower.contains(&q) {
         lexical_score += 1.2;
-        matched_any = true;
     }
     if item.tags.iter().any(|t| t.to_lowercase().contains(&q)) {
         lexical_score += 2.0;
-        matched_any = true;
     }
+    let matched_any = lexical_score > 0.0;
 
     // Token-level overlap for multi-term and semantic/hybrid queries
     let mut term_hits = 0usize;
@@ -69,7 +63,10 @@ fn compute_query_score(item: &KnowledgeItem, query: &str, mode: SearchMode) -> O
             let total_bigrams = q_chars.len() - 1;
             for window in q_chars.windows(2) {
                 let bg: String = window.iter().collect();
-                if title_lower.contains(&bg) || preview_lower.contains(&bg) || content_lower.contains(&bg) {
+                if title_lower.contains(&bg)
+                    || preview_lower.contains(&bg)
+                    || content_lower.contains(&bg)
+                {
                     bigram_hits += 1;
                 }
             }
@@ -93,13 +90,15 @@ fn compute_query_score(item: &KnowledgeItem, query: &str, mode: SearchMode) -> O
             if !matched_any && semantic_score <= 0.0 && term_hits == 0 {
                 return None;
             }
-            item.score.unwrap_or_else(|| (semantic_score + lexical_score * 0.4).max(0.5))
+            item.score
+                .unwrap_or_else(|| lexical_score.mul_add(0.4, semantic_score).max(0.5))
         }
         SearchMode::Hybrid => {
             if !matched_any && semantic_score <= 0.0 && term_hits == 0 {
                 return None;
             }
-            item.score.unwrap_or_else(|| lexical_score + semantic_score * 0.6)
+            let hybrid_score = semantic_score.mul_add(0.6, lexical_score);
+            item.score.unwrap_or(hybrid_score)
         }
     };
 
@@ -200,111 +199,106 @@ pub fn clipboard_list_view(
         )
     };
 
-    view()
-        .flex_1()
-        .w_full()
-        .px(px(8.0))
-        .child(
-            when(
-                move || get_filtered().is_empty(),
-                move || {
-                    // Empty placeholder
-                    view()
-                        .flex_1()
-                        .items_center()
-                        .justify_center()
-                        .gap(px(8.0))
-                        .py(px(40.0))
-                        .child(text(glyphs::SEARCH).font_family("iconfont").text_color(text_3).text_2xl())
-                        .child(
-                            text(I18nKey::CardEmptyTitle.text())
-                                .text_color(text_2)
-                                .font_weight(FontWeight::BOLD)
-                                .text_xs(),
-                        )
-                        .child(
-                            text(I18nKey::CardEmptyDesc.text())
-                                .text_color(text_3)
-                                .text_xs(),
-                        )
-                },
-            )
-            .otherwise(move || {
-                let copy_fn = on_copy_item.clone();
-                let edit_fn = on_edit_item.clone();
-                let fav_fn = on_fav_item.clone();
-                let del_fn = on_delete_item.clone();
-
-                scroll()
+    view().flex_1().w_full().px(px(8.0)).child(
+        when(
+            move || get_filtered().is_empty(),
+            move || {
+                // Empty placeholder
+                view()
                     .flex_1()
+                    .items_center()
+                    .justify_center()
+                    .gap(px(8.0))
+                    .py(px(40.0))
                     .child(
-                        view()
-                            .flex_col()
-                            .gap(px(6.0))
-                            .pb(px(8.0))
-                            .child(each(
-                                get_filtered,
-                                |item: &KnowledgeItem| item.id.clone(),
-                                move |item, index| {
-                                    let is_selected = move || selected_index_signal.get() == Some(index.get());
-
-                                    let copy_for_select = copy_fn.clone();
-                                    let edit_for_select = edit_fn.clone();
-                                    let on_select = move || {
-                                        let idx = index.get_untracked();
-                                        let cur_item = item.get_untracked();
-                                        if selected_index_signal.get_untracked() == Some(idx) {
-                                            edit_for_select(cur_item);
-                                        } else {
-                                            selected_index_signal.set(Some(idx));
-                                            if store.settings.get_untracked().paste_on_select {
-                                                copy_for_select(cur_item);
-                                            } else {
-                                                store.show_toast(format!(
-                                                    "已选中「{}」，再次点击可打开编辑",
-                                                    cur_item.title
-                                                ));
-                                            }
-                                        }
-                                    };
-
-                                    let on_copy_cb = copy_fn.clone();
-                                    let on_copy = move || on_copy_cb(item.get_untracked());
-
-                                    let on_tag = move || {
-                                        store.tag_picking_item.set(Some(item.get_untracked()));
-                                    };
-
-                                    let on_more = move || {
-                                        store.context_menu_item.set(Some(item.get_untracked()));
-                                    };
-
-                                    let on_edit_cb = edit_fn.clone();
-                                    let on_edit = move || on_edit_cb(item.get_untracked());
-
-                                    let on_fav_cb = fav_fn.clone();
-                                    let on_fav = move || on_fav_cb(item.get_untracked());
-
-                                    let on_del_cb = del_fn.clone();
-                                    let on_del = move || on_del_cb(item.get_untracked());
-
-                                    knowledge_card_view(
-                                        store,
-                                        item,
-                                        is_selected,
-                                        search_query,
-                                        theme,
-                                        on_select,
-                                        on_copy,
-                                        on_tag,
-                                        on_more,
-                                        on_edit,
-                                        on_fav,
-                                        on_del,
-                                    )
-                                },
-                            )),
+                        text(glyphs::SEARCH)
+                            .font_family("iconfont")
+                            .text_color(text_3)
+                            .text_2xl(),
                     )
-            }),
+                    .child(
+                        text(I18nKey::CardEmptyTitle.text())
+                            .text_color(text_2)
+                            .font_weight(FontWeight::BOLD)
+                            .text_xs(),
+                    )
+                    .child(
+                        text(I18nKey::CardEmptyDesc.text())
+                            .text_color(text_3)
+                            .text_xs(),
+                    )
+            },
         )
+        .otherwise(move || {
+            let copy_fn = on_copy_item.clone();
+            let edit_fn = on_edit_item.clone();
+            let fav_fn = on_fav_item.clone();
+            let del_fn = on_delete_item.clone();
+
+            scroll()
+                .flex_1()
+                .child(view().flex_col().gap(px(6.0)).pb(px(8.0)).child(each(
+                    get_filtered,
+                    |item: &KnowledgeItem| item.id.clone(),
+                    move |item, index| {
+                        let is_selected = move || selected_index_signal.get() == Some(index.get());
+
+                        let copy_for_select = copy_fn.clone();
+                        let edit_for_select = edit_fn.clone();
+                        let on_select = move || {
+                            let idx = index.get_untracked();
+                            let cur_item = item.get_untracked();
+                            if selected_index_signal.get_untracked() == Some(idx) {
+                                edit_for_select(cur_item);
+                            } else {
+                                selected_index_signal.set(Some(idx));
+                                if store.settings.get_untracked().paste_on_select {
+                                    copy_for_select(cur_item);
+                                } else {
+                                    store.show_toast(format!(
+                                        "已选中「{}」，再次点击可打开编辑",
+                                        cur_item.title
+                                    ));
+                                }
+                            }
+                        };
+
+                        let on_copy_cb = copy_fn.clone();
+                        let on_copy = move || on_copy_cb(item.get_untracked());
+
+                        let on_tag = move || {
+                            store.tag_picking_item.set(Some(item.get_untracked()));
+                        };
+
+                        let on_more = move || {
+                            store.context_menu_item.set(Some(item.get_untracked()));
+                        };
+
+                        let on_edit_cb = edit_fn.clone();
+                        let on_edit = move || on_edit_cb(item.get_untracked());
+
+                        let on_fav_cb = fav_fn.clone();
+                        let on_fav = move || on_fav_cb(item.get_untracked());
+
+                        let on_del_cb = del_fn.clone();
+                        let on_del = move || on_del_cb(item.get_untracked());
+
+                        knowledge_card_view(
+                            store,
+                            item,
+                            is_selected,
+                            search_query,
+                            theme,
+                            on_select,
+                            on_copy,
+                            on_tag,
+                            on_more,
+                            on_edit,
+                            on_fav,
+                            on_del,
+                        )
+                    },
+                )))
+        }),
+    )
 }

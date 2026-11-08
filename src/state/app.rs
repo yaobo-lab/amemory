@@ -1,7 +1,7 @@
 //! Central reactive application state.
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use nsh_core::prelude::*;
 
@@ -157,7 +157,8 @@ impl AppStore {
     pub fn set_items(&self, mut items: Vec<KnowledgeItem>) {
         let settings = self.settings.get_untracked();
         for item in &mut items {
-            let fav = settings.is_favorite(&item.id) || settings.is_favorite(&item.uri) || item.favorite;
+            let fav =
+                settings.is_favorite(&item.id) || settings.is_favorite(&item.uri) || item.favorite;
             item.favorite = fav;
             item.is_favorite = fav;
             item.tags = settings.merged_item_tags(&item.id, &item.tags);
@@ -191,6 +192,7 @@ impl AppStore {
     }
 
     /// Toggle favorite status for an item and persist to `etc/gui_settings.json`.
+    #[must_use]
     pub fn toggle_item_favorite(&self, item_id: &str) -> bool {
         let mut next_fav = false;
         self.update_settings(|s| {

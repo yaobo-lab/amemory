@@ -6,19 +6,15 @@ use super::theme::ClippiTheme;
 
 /// Render rich content preview block
 #[must_use]
-pub fn rich_preview_view(
-    content: &str,
-    theme: ClippiTheme,
-) -> impl IntoElement {
+pub fn rich_preview_view(content: &str, theme: ClippiTheme) -> impl IntoElement + use<> {
     let text_1 = theme.text_1;
     let card_bg = theme.card_bg;
     let divider = theme.divider;
 
-    let line_elements = content.lines().take(50).map(|line| {
-        text(line.to_string())
-            .text_color(text_1)
-            .text_xs()
-    });
+    let line_elements = content
+        .lines()
+        .take(50)
+        .map(|line| text(line.to_string()).text_color(text_1).text_xs());
 
     view()
         .w_full()
@@ -33,11 +29,6 @@ pub fn rich_preview_view(
             scroll()
                 .w_full()
                 .h_full()
-                .child(
-                    view()
-                        .flex_col()
-                        .gap(px(2.0))
-                        .children(line_elements),
-                ),
+                .child(view().flex_col().gap(px(2.0)).children(line_elements)),
         )
 }

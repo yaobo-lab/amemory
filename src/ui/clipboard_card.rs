@@ -14,7 +14,7 @@ use crate::state::app::AppStore;
 #[allow(clippy::needless_pass_by_value, clippy::too_many_arguments)]
 pub fn knowledge_card_view(
     store: AppStore,
-    item_sig: Signal<KnowledgeItem>,
+    item_sig: ReadSignal<KnowledgeItem>,
     is_selected: impl Fn() -> bool + Copy + 'static,
     search_query: Signal<String>,
     theme: ClippiTheme,
@@ -58,13 +58,6 @@ pub fn knowledge_card_view(
 
     let query = search_query.get();
     let snippet_spans = highlight_text(&item.preview, &query);
-    let extra_tags: Vec<String> = item
-        .tags
-        .iter()
-        .filter(|t| !t.starts_with("skill:") && !t.starts_with("book:") && !t.contains('/'))
-        .take(3)
-        .cloned()
-        .collect();
 
     view()
         .h(move || px(store.card_height()))
@@ -80,12 +73,13 @@ pub fn knowledge_card_view(
         .on_mouse_enter(move |_: &MouseEvent| is_hovered.set(true))
         .on_mouse_leave(move |_: &MouseEvent| is_hovered.set(false))
         // Left favorite indicator stripe (3px)
-        .child(
-            view()
-                .w(px(3.0))
-                .h_full()
-                .bg(move || if item_sig.get().favorite { fav_color } else { divider }),
-        )
+        .child(view().w(px(3.0)).h_full().bg(move || {
+            if item_sig.get().favorite {
+                fav_color
+            } else {
+                divider
+            }
+        }))
         // Left type column (36px)
         .child(
             view()
@@ -100,11 +94,7 @@ pub fn knowledge_card_view(
                         .text_color(move || if is_selected() { accent } else { text_2 })
                         .text_sm(),
                 )
-                .child(
-                    text(kind_name)
-                        .text_color(text_3)
-                        .text_xs(),
-                ),
+                .child(text(kind_name).text_color(text_3).text_xs()),
         )
         // Right content column
         .child(
@@ -133,15 +123,13 @@ pub fn knowledge_card_view(
                             .font_weight(FontWeight::BOLD)
                             .text_xs(),
                         )
-                        .child(
-                            when(
-                                move || item_sig.get().score.is_some(),
-                                move || {
-                                    let s = item_sig.get().score.unwrap_or(0.0);
-                                    view().child(text(format!("{s:.2}")).text_color(accent).text_xs())
-                                },
-                            ),
-                        ),
+                        .child(when(
+                            move || item_sig.get().score.is_some(),
+                            move || {
+                                let s = item_sig.get().score.unwrap_or(0.0);
+                                view().child(text(format!("{s:.2}")).text_color(accent).text_xs())
+                            },
+                        )),
                 )
                 // Middle row: Preview snippet with keyword highlight
                 .child(
@@ -153,7 +141,11 @@ pub fn knowledge_card_view(
                         .children(snippet_spans.into_iter().map(move |span| {
                             text(span.text)
                                 .text_color(if span.is_highlight { accent } else { text_2 })
-                                .font_weight(if span.is_highlight { FontWeight::BOLD } else { FontWeight::NORMAL })
+                                .font_weight(if span.is_highlight {
+                                    FontWeight::BOLD
+                                } else {
+                                    FontWeight::NORMAL
+                                })
                                 .text_xs()
                         })),
                 )
@@ -173,73 +165,81 @@ pub fn knowledge_card_view(
                                 .child(
                                     text(move || {
                                         let o = item_sig.get().owner;
-                                        if o.is_empty() { "default".to_string() } else { o }
+                                        if o.is_empty() {
+                                            "default".to_string()
+                                        } else {
+                                            o
+                                        }
                                     })
                                     .text_color(tag_text)
                                     .text_xs(),
                                 ),
                         )
-                        .child(
-                            if item.part_total > 1 {
-                                view()
-                                    .px(px(4.0))
-                                    .py(px(1.0))
-                                    .rounded(px(3.0))
-                                    .bg(tag_bg)
-                                    .child(
-                                        text(format!("#{}/{}", item.part_index, item.part_total))
-                                            .text_color(text_3)
-                                            .text_xs(),
-                                    )
-                            } else {
-                                view()
-                            },
-                        )
-                        .children(extra_tags.into_iter().map(move |t_str| {
-                            let click_t = t_str.clone();
+                        .child(if item.part_total > 1 {
                             view()
                                 .px(px(4.0))
                                 .py(px(1.0))
                                 .rounded(px(3.0))
                                 .bg(tag_bg)
-                                .cursor_pointer()
-                                .on_press(move || {
-                                    store.filters.update(|f| {
-                                        if !f.tags.contains(&click_t) {
-                                            f.tags.push(click_t.clone());
-                                        }
-                                    });
-                                })
                                 .child(
-                                    text(format!("#{t_str}"))
-                                        .text_color(accent)
+                                    text(format!("#{}/{}", item.part_index, item.part_total))
+                                        .text_color(text_3)
                                         .text_xs(),
                                 )
-                        })),
+                        } else {
+                            view()
+                        })
+                        .children(
+                            item.tags
+                                .iter()
+                                .filter(|t| {
+                                    !t.starts_with("skill:")
+                                        && !t.starts_with("book:")
+                                        && !t.contains('/')
+                                })
+                                .take(3)
+                                .map(move |t_str| {
+                                    let click_t = t_str.clone();
+                                    view()
+                                        .px(px(4.0))
+                                        .py(px(1.0))
+                                        .rounded(px(3.0))
+                                        .bg(tag_bg)
+                                        .cursor_pointer()
+                                        .on_press(move || {
+                                            store.filters.update(|f| {
+                                                if !f.tags.contains(&click_t) {
+                                                    f.tags.push(click_t.clone());
+                                                }
+                                            });
+                                        })
+                                        .child(
+                                            text(format!("#{t_str}")).text_color(accent).text_xs(),
+                                        )
+                                }),
+                        ),
                 ),
         )
         // Hover toolbar
-        .child(
-            when(
-                move || is_hovered.get(),
-                move || {
-                    let c_copy = on_copy.clone();
-                    let c_tag = on_tag.clone();
-                    let c_more = on_more.clone();
-                    let c_edit = on_edit.clone();
-                    let c_fav = on_fav.clone();
-                    let c_del = on_delete.clone();
-                    hover_toolbar_view(
-                        move || item_sig.get().favorite,
-                        theme,
-                        move || c_copy(),
-                        move || c_tag(),
-                        move || c_more(),
-                        move || c_edit(),
-                        move || c_fav(),
-                        move || c_del(),
-                    )
-                },
-            ),
-        )
+        .child(when(
+            move || is_hovered.get(),
+            move || {
+                let c_copy = on_copy.clone();
+                let c_tag = on_tag.clone();
+                let c_more = on_more.clone();
+                let c_edit = on_edit.clone();
+                let c_fav = on_fav.clone();
+                let c_del = on_delete.clone();
+                hover_toolbar_view(
+                    move || item_sig.get().favorite,
+                    theme,
+                    move || c_copy(),
+                    move || c_tag(),
+                    move || c_more(),
+                    move || c_edit(),
+                    move || c_fav(),
+                    move || c_del(),
+                )
+            },
+        ))
 }

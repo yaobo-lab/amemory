@@ -4,6 +4,7 @@ use nsh_core::prelude::*;
 
 use super::{setting_row, settings_group};
 use crate::core::settings::{CardHeightMode, ThemeMode, WindowPositionMode};
+use crate::platform::window_frame::{DEFAULT_WINDOW_H, DEFAULT_WINDOW_W};
 use crate::state::app::AppStore;
 use crate::ui::components::slider::stepped_slider;
 use crate::ui::components::toggle::render_toggle;
@@ -33,9 +34,80 @@ pub fn render_general_tab(store: AppStore, theme: ClippiTheme) -> impl IntoEleme
                     view()
                         .flex_row()
                         .gap(px(4.0))
-                        .child(theme_btn(ThemeMode::System, "系统", settings, accent, divider, text_2))
-                        .child(theme_btn(ThemeMode::Dark, "暗色", settings, accent, divider, text_2))
-                        .child(theme_btn(ThemeMode::Light, "亮色", settings, accent, divider, text_2)),
+                        .child(theme_btn(
+                            ThemeMode::System,
+                            "系统",
+                            store,
+                            accent,
+                            divider,
+                            text_2,
+                        ))
+                        .child(theme_btn(
+                            ThemeMode::Dark,
+                            "暗色",
+                            store,
+                            accent,
+                            divider,
+                            text_2,
+                        ))
+                        .child(theme_btn(
+                            ThemeMode::Light,
+                            "亮色",
+                            store,
+                            accent,
+                            divider,
+                            text_2,
+                        )),
+                    theme,
+                ),
+                // Accent Color
+                setting_row(
+                    "主题强调色",
+                    Some("自定义高亮与选中主色调"),
+                    view()
+                        .flex_row()
+                        .items_center()
+                        .gap(px(6.0))
+                        .child(accent_dot(None, 0x7ecba3, "默认绿", store, divider))
+                        .child(accent_dot(
+                            Some("#3b82f6"),
+                            0x3b82f6,
+                            "科技蓝",
+                            store,
+                            divider,
+                        ))
+                        .child(accent_dot(
+                            Some("#8b5cf6"),
+                            0x8b5cf6,
+                            "极光紫",
+                            store,
+                            divider,
+                        ))
+                        .child(accent_dot(
+                            Some("#f59e0b"),
+                            0xf59e0b,
+                            "琥珀金",
+                            store,
+                            divider,
+                        ))
+                        .child(accent_dot(
+                            Some("#f43f5e"),
+                            0xf43f5e,
+                            "珊瑚红",
+                            store,
+                            divider,
+                        )),
+                    theme,
+                ),
+                // Language
+                setting_row(
+                    "界面语言",
+                    Some("切换中文或英文界面显示"),
+                    view()
+                        .flex_row()
+                        .gap(px(4.0))
+                        .child(lang_btn("zh", "简体中文", store, accent, divider, text_2))
+                        .child(lang_btn("en", "English", store, accent, divider, text_2)),
                     theme,
                 ),
                 // Font Scale Slider
@@ -49,7 +121,8 @@ pub fn render_general_tab(store: AppStore, theme: ClippiTheme) -> impl IntoEleme
                         settings.get().font_scale,
                         theme,
                         move |val| {
-                            settings.update(|s| s.font_scale = val);
+                            store.update_settings(|s| s.font_scale = val);
+                            store.show_toast(format!("已调整界面缩放: {:.0}%", val * 100.0));
                         },
                     ),
                     theme,
@@ -61,9 +134,30 @@ pub fn render_general_tab(store: AppStore, theme: ClippiTheme) -> impl IntoEleme
                     view()
                         .flex_row()
                         .gap(px(4.0))
-                        .child(card_height_btn(CardHeightMode::Compact, "紧凑 68px", settings, accent, divider, text_2))
-                        .child(card_height_btn(CardHeightMode::Standard, "标准 96px", settings, accent, divider, text_2))
-                        .child(card_height_btn(CardHeightMode::Comfort, "宽敞 128px", settings, accent, divider, text_2)),
+                        .child(card_height_btn(
+                            CardHeightMode::Compact,
+                            "紧凑 68px",
+                            store,
+                            accent,
+                            divider,
+                            text_2,
+                        ))
+                        .child(card_height_btn(
+                            CardHeightMode::Standard,
+                            "标准 96px",
+                            store,
+                            accent,
+                            divider,
+                            text_2,
+                        ))
+                        .child(card_height_btn(
+                            CardHeightMode::Comfort,
+                            "宽敞 128px",
+                            store,
+                            accent,
+                            divider,
+                            text_2,
+                        )),
                     theme,
                 ),
             ],
@@ -80,35 +174,58 @@ pub fn render_general_tab(store: AppStore, theme: ClippiTheme) -> impl IntoEleme
                     view()
                         .flex_row()
                         .gap(px(4.0))
-                        .child(pos_btn(WindowPositionMode::FollowMouse, "跟随鼠标", settings, accent, divider, text_2))
-                        .child(pos_btn(WindowPositionMode::Center, "屏幕居中", settings, accent, divider, text_2))
-                        .child(pos_btn(WindowPositionMode::Remember, "记住位置", settings, accent, divider, text_2)),
+                        .child(pos_btn(
+                            WindowPositionMode::FollowMouse,
+                            "跟随鼠标",
+                            store,
+                            accent,
+                            divider,
+                            text_2,
+                        ))
+                        .child(pos_btn(
+                            WindowPositionMode::Center,
+                            "屏幕居中",
+                            store,
+                            accent,
+                            divider,
+                            text_2,
+                        ))
+                        .child(pos_btn(
+                            WindowPositionMode::Remember,
+                            "记住位置",
+                            store,
+                            accent,
+                            divider,
+                            text_2,
+                        )),
                     theme,
                 ),
                 // Auto hide on blur
                 setting_row(
                     "失去焦点自动隐藏",
                     Some("窗口点击外部时自动最小化到托盘"),
-                    render_toggle(
-                        settings.get().auto_hide_on_blur,
-                        theme,
-                        move |next| {
-                            settings.update(|s| s.auto_hide_on_blur = next);
-                        },
-                    ),
+                    render_toggle(settings.get().auto_hide_on_blur, theme, move |next| {
+                        store.update_settings(|s| s.auto_hide_on_blur = next);
+                        store.show_toast(if next {
+                            "已开启失焦自动隐藏"
+                        } else {
+                            "已关闭失焦自动隐藏"
+                        });
+                    }),
                     theme,
                 ),
                 // Auto copy sound
                 setting_row(
                     "复制/操作音效",
                     Some("当复制知识卡片时播放提示音"),
-                    render_toggle(
-                        settings.get().play_sound_on_copy,
-                        theme,
-                        move |next| {
-                            settings.update(|s| s.play_sound_on_copy = next);
-                        },
-                    ),
+                    render_toggle(settings.get().play_sound_on_copy, theme, move |next| {
+                        store.update_settings(|s| s.play_sound_on_copy = next);
+                        store.show_toast(if next {
+                            "已开启操作音效"
+                        } else {
+                            "已关闭操作音效"
+                        });
+                    }),
                     theme,
                 ),
             ],
@@ -118,23 +235,103 @@ pub fn render_general_tab(store: AppStore, theme: ClippiTheme) -> impl IntoEleme
 fn theme_btn(
     mode: ThemeMode,
     label: &'static str,
-    settings: Signal<crate::core::settings::GuiSettings>,
+    store: AppStore,
     accent: nsh_core::prelude::Rgba,
     divider: nsh_core::prelude::Rgba,
     text_color: nsh_core::prelude::Rgba,
 ) -> impl IntoElement {
+    let settings = store.settings;
     view()
         .px(px(6.0))
         .py(px(2.0))
         .rounded(px(4.0))
-        .bg(move || if settings.get().theme_mode == mode { accent } else { divider })
+        .bg(move || {
+            if settings.get().theme_mode == mode {
+                accent
+            } else {
+                divider
+            }
+        })
         .cursor_pointer()
         .on_press(move || {
-            settings.update(|s| s.theme_mode = mode);
+            store.update_settings(|s| s.theme_mode = mode);
+            store.show_toast(format!("已切换主题模式: {label}"));
         })
         .child(
             text(label)
-                .text_color(move || if settings.get().theme_mode == mode { rgb(0xffffff) } else { text_color })
+                .text_color(move || {
+                    if settings.get().theme_mode == mode {
+                        rgb(0xffffff)
+                    } else {
+                        text_color
+                    }
+                })
+                .text_xs(),
+        )
+}
+
+fn accent_dot(
+    hex: Option<&'static str>,
+    color_u32: u32,
+    label: &'static str,
+    store: AppStore,
+    divider: nsh_core::prelude::Rgba,
+) -> impl IntoElement {
+    let settings = store.settings;
+    view()
+        .size(px(18.0))
+        .rounded(px(9.0))
+        .bg(rgb(color_u32))
+        .border(px(2.0))
+        .border_color(move || {
+            let cur = settings.get().accent_color;
+            if cur.as_deref() == hex {
+                rgb(0xffffff)
+            } else {
+                divider
+            }
+        })
+        .cursor_pointer()
+        .on_press(move || {
+            store.update_settings(|s| s.accent_color = hex.map(str::to_string));
+            store.show_toast(format!("已切换强调色: {label}"));
+        })
+}
+
+fn lang_btn(
+    lang_code: &'static str,
+    label: &'static str,
+    store: AppStore,
+    accent: nsh_core::prelude::Rgba,
+    divider: nsh_core::prelude::Rgba,
+    text_color: nsh_core::prelude::Rgba,
+) -> impl IntoElement {
+    let settings = store.settings;
+    view()
+        .px(px(6.0))
+        .py(px(2.0))
+        .rounded(px(4.0))
+        .bg(move || {
+            if settings.get().language == lang_code {
+                accent
+            } else {
+                divider
+            }
+        })
+        .cursor_pointer()
+        .on_press(move || {
+            store.update_settings(|s| s.language = lang_code.to_string());
+            store.show_toast(format!("已切换语言: {label}"));
+        })
+        .child(
+            text(label)
+                .text_color(move || {
+                    if settings.get().language == lang_code {
+                        rgb(0xffffff)
+                    } else {
+                        text_color
+                    }
+                })
                 .text_xs(),
         )
 }
@@ -142,23 +339,37 @@ fn theme_btn(
 fn card_height_btn(
     mode: CardHeightMode,
     label: &'static str,
-    settings: Signal<crate::core::settings::GuiSettings>,
+    store: AppStore,
     accent: nsh_core::prelude::Rgba,
     divider: nsh_core::prelude::Rgba,
     text_color: nsh_core::prelude::Rgba,
 ) -> impl IntoElement {
+    let settings = store.settings;
     view()
         .px(px(6.0))
         .py(px(2.0))
         .rounded(px(4.0))
-        .bg(move || if settings.get().card_height_mode == mode { accent } else { divider })
+        .bg(move || {
+            if settings.get().card_height_mode == mode {
+                accent
+            } else {
+                divider
+            }
+        })
         .cursor_pointer()
         .on_press(move || {
-            settings.update(|s| s.card_height_mode = mode);
+            store.update_settings(|s| s.card_height_mode = mode);
+            store.show_toast(format!("已切换卡片高度: {label}"));
         })
         .child(
             text(label)
-                .text_color(move || if settings.get().card_height_mode == mode { rgb(0xffffff) } else { text_color })
+                .text_color(move || {
+                    if settings.get().card_height_mode == mode {
+                        rgb(0xffffff)
+                    } else {
+                        text_color
+                    }
+                })
                 .text_xs(),
         )
 }
@@ -166,23 +377,38 @@ fn card_height_btn(
 fn pos_btn(
     mode: WindowPositionMode,
     label: &'static str,
-    settings: Signal<crate::core::settings::GuiSettings>,
+    store: AppStore,
     accent: nsh_core::prelude::Rgba,
     divider: nsh_core::prelude::Rgba,
     text_color: nsh_core::prelude::Rgba,
 ) -> impl IntoElement {
+    let settings = store.settings;
     view()
         .px(px(6.0))
         .py(px(2.0))
         .rounded(px(4.0))
-        .bg(move || if settings.get().window_position_mode == mode { accent } else { divider })
+        .bg(move || {
+            if settings.get().window_position_mode == mode {
+                accent
+            } else {
+                divider
+            }
+        })
         .cursor_pointer()
         .on_press(move || {
-            settings.update(|s| s.window_position_mode = mode);
+            store.update_settings(|s| s.window_position_mode = mode);
+            crate::platform::monitor::position_window(mode, DEFAULT_WINDOW_W, DEFAULT_WINDOW_H);
+            store.show_toast(format!("已应用窗口位置策略: {label}"));
         })
         .child(
             text(label)
-                .text_color(move || if settings.get().window_position_mode == mode { rgb(0xffffff) } else { text_color })
+                .text_color(move || {
+                    if settings.get().window_position_mode == mode {
+                        rgb(0xffffff)
+                    } else {
+                        text_color
+                    }
+                })
                 .text_xs(),
         )
 }

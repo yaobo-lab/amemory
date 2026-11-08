@@ -45,6 +45,19 @@ impl ItemKind {
         }
     }
 
+    /// User-facing Chinese label.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Skill => "技能",
+            Self::Book => "书本",
+            Self::Document => "文档",
+            Self::Memory => "记忆",
+            Self::Script => "脚本",
+            Self::Note => "便签",
+        }
+    }
+
     /// Parse a persisted identifier.
     #[must_use]
     pub fn from_id(id: &str) -> Option<Self> {
@@ -241,12 +254,30 @@ mod tests {
 
     #[test]
     fn classify_maps_paths_to_kinds() {
-        assert_eq!(ItemKind::classify("skill", "SKILL.md", "skill://a/SKILL.md"), ItemKind::Skill);
-        assert_eq!(ItemKind::classify("skill", "scripts/run.sh", ""), ItemKind::Script);
-        assert_eq!(ItemKind::classify("book", "notes/a.md", "book://b"), ItemKind::Note);
-        assert_eq!(ItemKind::classify("book_document", "files/x.pdf", ""), ItemKind::Document);
-        assert_eq!(ItemKind::classify("memory", "", "memory://default/1"), ItemKind::Memory);
-        assert_eq!(ItemKind::classify("book", "BOOK.md", "book://b"), ItemKind::Book);
+        assert_eq!(
+            ItemKind::classify("skill", "SKILL.md", "skill://a/SKILL.md"),
+            ItemKind::Skill
+        );
+        assert_eq!(
+            ItemKind::classify("skill", "scripts/run.sh", ""),
+            ItemKind::Script
+        );
+        assert_eq!(
+            ItemKind::classify("book", "notes/a.md", "book://b"),
+            ItemKind::Note
+        );
+        assert_eq!(
+            ItemKind::classify("book_document", "files/x.pdf", ""),
+            ItemKind::Document
+        );
+        assert_eq!(
+            ItemKind::classify("memory", "", "memory://default/1"),
+            ItemKind::Memory
+        );
+        assert_eq!(
+            ItemKind::classify("book", "BOOK.md", "book://b"),
+            ItemKind::Book
+        );
     }
 
     #[test]

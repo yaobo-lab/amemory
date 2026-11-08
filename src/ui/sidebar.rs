@@ -2,6 +2,7 @@
 
 use nsh_core::prelude::*;
 
+use super::components::tooltip_box;
 use super::theme::ClippiTheme;
 use crate::state::app::AppStore;
 
@@ -22,7 +23,9 @@ pub fn sidebar_view(store: AppStore, theme: ClippiTheme) -> impl IntoElement {
 
     let get_tag_list = move || {
         let mut set = std::collections::BTreeSet::new();
-        for preset in ["rust", "mcp", "xerj", "book", "skill", "doc", "async", "tokio"] {
+        for preset in [
+            "rust", "mcp", "xerj", "book", "skill", "doc", "async", "tokio",
+        ] {
             set.insert(preset.to_string());
         }
         for u in settings.get().user_tags {
@@ -71,78 +74,76 @@ pub fn sidebar_view(store: AppStore, theme: ClippiTheme) -> impl IntoElement {
         .child(
             scroll()
                 .flex_1()
-                .child(
-                    view()
-                        .flex_col()
-                        .gap(px(3.0))
-                        .child(each(
-                            get_tag_list,
-                            |tag: &String| tag.clone(),
-                            move |tag_sig, _| {
-                                let tag_name = tag_sig.get();
-                                let tag_bg_str = tag_name.clone();
-                                let tag_border_str = tag_name.clone();
-                                let tag_text_str = tag_name.clone();
-                                let tag_click = tag_name.clone();
-                                let display_label = tag_name
-                                    .strip_prefix("skill:")
-                                    .or_else(|| tag_name.strip_prefix("book:"))
-                                    .unwrap_or(&tag_name)
-                                    .to_string();
+                .child(view().flex_col().gap(px(3.0)).child(each(
+                    get_tag_list,
+                    |tag: &String| tag.clone(),
+                    move |tag_sig, _| {
+                        let tag_name = tag_sig.get();
+                        let tag_bg_str = tag_name.clone();
+                        let tag_border_str = tag_name.clone();
+                        let tag_text_str = tag_name.clone();
+                        let tag_click = tag_name.clone();
+                        let display_label = tag_name
+                            .strip_prefix("skill:")
+                            .or_else(|| tag_name.strip_prefix("book:"))
+                            .unwrap_or(&tag_name)
+                            .to_string();
 
-                                view()
-                                    .h(px(22.0))
-                                    .w_full()
-                                    .px(px(3.0))
-                                    .rounded(px(5.0))
-                                    .overflow_hidden()
-                                    .bg(move || {
-                                        let active = if tag_bg_str == "全部" {
-                                            filters.get().tags.is_empty()
+                        view()
+                            .h(px(22.0))
+                            .w_full()
+                            .px(px(3.0))
+                            .rounded(px(5.0))
+                            .overflow_hidden()
+                            .bg(move || {
+                                let active = if tag_bg_str == "全部" {
+                                    filters.get().tags.is_empty()
+                                } else {
+                                    filters.get().tags.contains(&tag_bg_str)
+                                };
+                                if active { accent_soft } else { tag_bg }
+                            })
+                            .border(px(1.0))
+                            .border_color(move || {
+                                let active = if tag_border_str == "全部" {
+                                    filters.get().tags.is_empty()
+                                } else {
+                                    filters.get().tags.contains(&tag_border_str)
+                                };
+                                if active { accent } else { divider }
+                            })
+                            .items_center()
+                            .justify_center()
+                            .cursor_pointer()
+                            .tooltip(tooltip_box(tag_name, theme))
+                            .on_press(move || {
+                                if tag_click == "全部" {
+                                    filters.update(|f| f.tags.clear());
+                                } else {
+                                    filters.update(|f| {
+                                        if let Some(pos) =
+                                            f.tags.iter().position(|t| t == &tag_click)
+                                        {
+                                            f.tags.remove(pos);
                                         } else {
-                                            filters.get().tags.contains(&tag_bg_str)
-                                        };
-                                        if active { accent_soft } else { tag_bg }
-                                    })
-                                    .border(px(1.0))
-                                    .border_color(move || {
-                                        let active = if tag_border_str == "全部" {
-                                            filters.get().tags.is_empty()
-                                        } else {
-                                            filters.get().tags.contains(&tag_border_str)
-                                        };
-                                        if active { accent } else { divider }
-                                    })
-                                    .items_center()
-                                    .justify_center()
-                                    .cursor_pointer()
-                                    .on_press(move || {
-                                        if tag_click == "全部" {
-                                            filters.update(|f| f.tags.clear());
-                                        } else {
-                                            filters.update(|f| {
-                                                if let Some(pos) = f.tags.iter().position(|t| t == &tag_click) {
-                                                    f.tags.remove(pos);
-                                                } else {
-                                                    f.tags.push(tag_click.clone());
-                                                }
-                                            });
+                                            f.tags.push(tag_click.clone());
                                         }
+                                    });
+                                }
+                            })
+                            .child(
+                                text(display_label)
+                                    .text_color(move || {
+                                        let active = if tag_text_str == "全部" {
+                                            filters.get().tags.is_empty()
+                                        } else {
+                                            filters.get().tags.contains(&tag_text_str)
+                                        };
+                                        if active { accent } else { tag_text }
                                     })
-                                    .child(
-                                        text(display_label)
-                                            .text_color(move || {
-                                                let active = if tag_text_str == "全部" {
-                                                    filters.get().tags.is_empty()
-                                                } else {
-                                                    filters.get().tags.contains(&tag_text_str)
-                                                };
-                                                if active { accent } else { tag_text }
-                                            })
-                                            .text_xs(),
-                                    )
-                            },
-                        )),
-                ),
+                                    .text_xs(),
+                            )
+                    },
+                ))),
         )
 }

@@ -1,14 +1,12 @@
 //! Integration test for real skills and books in `resource/skills` and `resource/books`.
 
-use std::sync::Arc;
 use adapter::{SearchStore, XerjAdapter};
 use domain::book::BookCatalog;
 use domain::memory::{SearchMode, SearchRequest};
 use domain::skill::SkillCatalog;
+use std::sync::Arc;
 use xcat::AppConfig;
-use xcat_mcp::amemory::{
-    FindBooksRequest, FindSkillsRequest, LoadBookRequest, LoadSkillRequest,
-};
+use xcat_mcp::amemory::{FindBooksRequest, FindSkillsRequest, LoadBookRequest, LoadSkillRequest};
 use xcat_mcp::rmcp::handler::server::wrapper::Parameters;
 use xcat_mcp::{AmemoryToolProvider, DocumentImportPolicy};
 
@@ -19,30 +17,57 @@ async fn test_skills_and_books_catalog_and_mcp_tools() {
 
     // 1. 验证技能库文件与元数据解析
     let skills_catalog = SkillCatalog::new(&config.storage.skills);
-    let skills = skills_catalog.collect_entries().expect("collect_entries failed");
+    let skills = skills_catalog
+        .collect_entries()
+        .expect("collect_entries failed");
     println!("=== 1. 已加载的技能目录 (共 {} 个技能) ===", skills.len());
     for s in &skills {
         println!("  - [Skill] 名称: {:<28} 描述: {}", s.name, s.description);
         assert!(!s.name.is_empty(), "Skill name cannot be empty");
-        assert!(!s.description.is_empty(), "Skill description cannot be empty");
+        assert!(
+            !s.description.is_empty(),
+            "Skill description cannot be empty"
+        );
 
-        let entry = skills_catalog.load_skill(&s.name).expect("Failed to load skill");
-        assert!(!entry.skill_markdown.is_empty(), "SKILL.md cannot be empty for {}", s.name);
+        let entry = skills_catalog
+            .load_skill(&s.name)
+            .expect("Failed to load skill");
+        assert!(
+            !entry.skill_markdown.is_empty(),
+            "SKILL.md cannot be empty for {}",
+            s.name
+        );
     }
     assert!(skills.len() >= 7, "Expected at least 7 skills");
 
     // 2. 验证电子书/知识库文件与章节解析
     let books_catalog = BookCatalog::new(&config.storage.books);
-    let books = books_catalog.collect_entries().expect("collect_entries failed");
+    let books = books_catalog
+        .collect_entries()
+        .expect("collect_entries failed");
     println!("=== 2. 已加载的电子书/知识库 (共 {} 本书) ===", books.len());
     for b in &books {
-        println!("  - [Book] 书名: {:<20} 描述: {:<30} 章节文件数: {}", b.name, b.description, b.files.len());
+        println!(
+            "  - [Book] 书名: {:<20} 描述: {:<30} 章节文件数: {}",
+            b.name,
+            b.description,
+            b.files.len()
+        );
         assert!(!b.name.is_empty(), "Book name cannot be empty");
 
-        let entry = books_catalog.load_book(&b.name).expect("Failed to load book");
-        assert!(!entry.book_markdown.is_empty(), "BOOK.md cannot be empty for {}", b.name);
+        let entry = books_catalog
+            .load_book(&b.name)
+            .expect("Failed to load book");
+        assert!(
+            !entry.book_markdown.is_empty(),
+            "BOOK.md cannot be empty for {}",
+            b.name
+        );
     }
-    assert!(books.len() >= 2, "Expected at least 2 books (buspro and voip)");
+    assert!(
+        books.len() >= 2,
+        "Expected at least 2 books (buspro and voip)"
+    );
 
     // 3. 打开底层 XERJ 向量/词法引擎并检查索引文档数
     let adapter = Arc::new(XerjAdapter::open(config.to_xerj_config()).expect("open XerjAdapter"));
@@ -51,7 +76,10 @@ async fn test_skills_and_books_catalog_and_mcp_tools() {
     println!("  - 技能索引分片数 (skills_docs): {}", stats.skills_docs);
     println!("  - 电子书索引分片数 (books_docs):  {}", stats.books_docs);
     println!("  - 记忆索引分片数 (memory_docs): {}", stats.memory_docs);
-    assert!(stats.skills_docs > 0, "Skills index should contain documents");
+    assert!(
+        stats.skills_docs > 0,
+        "Skills index should contain documents"
+    );
     assert!(stats.books_docs > 0, "Books index should contain documents");
 
     // 4. 验证全部技能语义/全文混合检索
@@ -63,7 +91,10 @@ async fn test_skills_and_books_catalog_and_mcp_tools() {
         ("程序员技术冷笑话", "dev-joke"),
         ("wirtec 一方 C代码约束", "wirtec"),
         ("check-c-arch 架构扫描违规", "check-c-arch"),
-        ("embedded-layer-architecture 架构分层", "embedded-layer-architecture"),
+        (
+            "embedded-layer-architecture 架构分层",
+            "embedded-layer-architecture",
+        ),
     ];
     for (query, expected_skill) in skill_queries {
         let hits = adapter
@@ -81,9 +112,12 @@ async fn test_skills_and_books_catalog_and_mcp_tools() {
             .await
             .expect("search skill");
         assert!(!hits.is_empty(), "Query '{query}' should return hits");
-        let any_matched = hits
-            .iter()
-            .any(|h| h.uri.as_deref().unwrap_or_default().contains(expected_skill));
+        let any_matched = hits.iter().any(|h| {
+            h.uri
+                .as_deref()
+                .unwrap_or_default()
+                .contains(expected_skill)
+        });
         println!(
             "  Query: {:<32} -> 命中 {} 条 | 首条: {} (期望命中: {})",
             format!("\"{query}\""),
@@ -91,7 +125,10 @@ async fn test_skills_and_books_catalog_and_mcp_tools() {
             hits[0].uri.as_deref().unwrap_or_default(),
             expected_skill
         );
-        assert!(any_matched, "Expected skill '{expected_skill}' in hits for query '{query}'");
+        assert!(
+            any_matched,
+            "Expected skill '{expected_skill}' in hits for query '{query}'"
+        );
     }
 
     // 5. 验证 XERJ 混合检索电子书
@@ -129,7 +166,10 @@ async fn test_skills_and_books_catalog_and_mcp_tools() {
             hits[0].uri.as_deref().unwrap_or_default(),
             expected_book
         );
-        assert!(any_matched, "Expected book '{expected_book}' in hits for query '{query}'");
+        assert!(
+            any_matched,
+            "Expected book '{expected_book}' in hits for query '{query}'"
+        );
     }
 
     // 6. 验证面向 Zed Agent 的 MCP 接口执行
@@ -142,7 +182,10 @@ async fn test_skills_and_books_catalog_and_mcp_tools() {
     );
 
     // 6.1 list_skills
-    let res = provider.list_skills().await.expect("list_skills tool failed");
+    let res = provider
+        .list_skills()
+        .await
+        .expect("list_skills tool failed");
     let text = res.content[0].as_text().expect("text content");
     assert!(text.text.contains("lvgl-maker"));
     assert!(text.text.contains("wirtec"));
@@ -170,7 +213,10 @@ async fn test_skills_and_books_catalog_and_mcp_tools() {
         .expect("load_skill tool failed");
     let text = res.content[0].as_text().expect("text content");
     assert!(!text.text.is_empty());
-    println!("  [OK] MCP load_skill('lvgl-maker'): 成功加载 SKILL.md ({} 字符)", text.text.len());
+    println!(
+        "  [OK] MCP load_skill('lvgl-maker'): 成功加载 SKILL.md ({} 字符)",
+        text.text.len()
+    );
 
     // 6.4 list_books
     let res = provider.list_books().await.expect("list_books tool failed");
@@ -201,7 +247,10 @@ async fn test_skills_and_books_catalog_and_mcp_tools() {
         .expect("load_book tool failed");
     let text = res.content[0].as_text().expect("text content");
     assert!(!text.text.is_empty());
-    println!("  [OK] MCP load_book('voip', '11.SIP注册流程-电话如何上线.md'): 成功读取正文 ({} 字符)", text.text.len());
+    println!(
+        "  [OK] MCP load_book('voip', '11.SIP注册流程-电话如何上线.md'): 成功读取正文 ({} 字符)",
+        text.text.len()
+    );
 
     println!("=======================================================");
     println!("所有 7 个技能与 2 部电子书/知识库全部测试通过，功能 100% 正常！");

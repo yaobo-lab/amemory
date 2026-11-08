@@ -42,12 +42,14 @@ impl Component for AmemoryGuiComponent {
             .get()
             .expect("GLOBAL_RUNTIME must be initialized")
             .clone();
-        let _config = GLOBAL_CONFIG
+        let config = GLOBAL_CONFIG
             .get()
             .expect("GLOBAL_CONFIG must be initialized");
 
         // 1. Create reactive application store
         let store = AppStore::new();
+        store.app_config.set(config.clone());
+        crate::platform::tray::configure_desktop_menus();
 
         // 2. Initial load of knowledge items from runtime
         let initial_items = runtime.load_all_knowledge_items();
@@ -71,6 +73,18 @@ impl Component for AmemoryGuiComponent {
             rx_store.check_toast_expiry();
         });
 
+        // Register dynamic global summon hotkey with window restore and search focus
+        let hotkey_tx = ui_tx.clone();
+        let initial_hotkey = store.settings.get().global_summon_hotkey;
+        crate::platform::hotkey::update_global_hotkey(&initial_hotkey);
+        crate::platform::hotkey::register_global_hotkey(move || {
+            let _ = hotkey_tx.send(Box::new(|st| {
+                st.active_view
+                    .set(crate::state::app::ActiveView::ClipboardList);
+                st.search_query.set(String::new());
+            }));
+        });
+
         // 4. Start background polling loop (stats every 5s)
         let rt_for_poll = runtime.clone();
         let poll_tx = ui_tx.clone();
@@ -78,7 +92,7 @@ impl Component for AmemoryGuiComponent {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
             loop {
                 interval.tick().await;
-                let stats = rt_for_poll.get_stats_snapshot();
+                let stats = rt_for_poll.stats_snapshot().await;
                 let _ = poll_tx.send(Box::new(move |st| {
                     st.set_stats(stats);
                 }));
@@ -93,8 +107,9 @@ impl Component for AmemoryGuiComponent {
             let tx = sync_tx.clone();
             let _ = tx.send(Box::new(|st| st.set_syncing(true)));
             spawn_task(async move {
+                let _ = rt.sync_all().await;
                 let reloaded = rt.load_all_knowledge_items();
-                let stats = rt.get_stats_snapshot();
+                let stats = rt.stats_snapshot().await;
                 let _ = tx.send(Box::new(move |st| {
                     st.set_items(reloaded);
                     st.set_stats(stats);
@@ -108,7 +123,9 @@ impl Component for AmemoryGuiComponent {
         let check_tx = ui_tx.clone();
         let on_check_update = move || {
             let tx = check_tx.clone();
-            let _ = tx.send(Box::new(|st| st.set_update_phase(crate::services::update::UpdatePhase::Checking)));
+            let _ = tx.send(Box::new(|st| {
+                st.set_update_phase(crate::services::update::UpdatePhase::Checking);
+            }));
             spawn_task(async move {
                 let checker = crate::services::update::UpdateChecker::new(
                     env!("CARGO_PKG_VERSION"),
@@ -118,7 +135,9 @@ impl Component for AmemoryGuiComponent {
                 match checker.check_github().await {
                     Ok(Some(info)) => {
                         let _ = tx.send(Box::new(move |st| {
-                            st.set_update_phase(crate::services::update::UpdatePhase::Available(info.clone()));
+                            st.set_update_phase(crate::services::update::UpdatePhase::Available(
+                                info.clone(),
+                            ));
                             st.set_update_available(Some(info));
                         }));
                     }
@@ -142,7 +161,9 @@ impl Component for AmemoryGuiComponent {
             let _ = tx.send(Box::new(|st| {
                 st.show_toast("开始下载更新...");
                 spawn_task(async move {
-                    if let Err(e) = crate::services::updater::AppUpdater::execute_download_and_verify(st).await {
+                    if let Err(e) =
+                        crate::services::updater::AppUpdater::execute_download_and_verify(st).await
+                    {
                         st.set_update_phase(crate::services::update::UpdatePhase::Error(e.clone()));
                         st.show_toast(format!("下载更新失败: {e}"));
                     }
@@ -167,16 +188,25 @@ impl Component for AmemoryGuiComponent {
         let on_rebuild_index = move || {
             let rt = rt_for_rebuild.clone();
             let tx = rebuild_tx.clone();
-            let _ = tx.send(Box::new(|st| st.show_toast("开始全量重建索引...")));
+            let _ = tx.send(Box::new(|st| {
+                st.set_syncing(true);
+                st.show_toast("开始全量重建索引...");
+            }));
             spawn_task(async move {
+                let sync_res = rt.sync_all().await;
                 let items = rt.load_all_knowledge_items();
-                for item in &items {
-                    let _ = rt.index_item(item);
-                }
-                let stats = rt.get_stats_snapshot();
+                let stats = rt.stats_snapshot().await;
                 let _ = tx.send(Box::new(move |st| {
+                    st.set_items(items);
                     st.set_stats(stats);
-                    st.show_toast("索引重建完毕！");
+                    st.set_syncing(false);
+                    match sync_res {
+                        Ok((s_rep, b_rep)) => st.show_toast(format!(
+                            "索引重建完毕！已索引 {} 个技能分块 / {} 个书本分块",
+                            s_rep.indexed_documents, b_rep.indexed_documents
+                        )),
+                        Err(e) => st.show_toast(format!("索引重建完成 (部分告警: {e})")),
+                    }
                 }));
             });
         };
@@ -189,18 +219,23 @@ impl Component for AmemoryGuiComponent {
             let tx = save_tx.clone();
             spawn_task(async move {
                 let res = rt.save_knowledge_item(&item);
-                let _ = tx.send(Box::new(move |st| {
-                    match res {
-                        Ok(()) => {
-                            let reloaded = rt.load_all_knowledge_items();
-                            let stats = rt.get_stats_snapshot();
-                            st.set_items(reloaded);
-                            st.set_stats(stats);
-                            st.show_toast(if is_new { "已新建知识项" } else { "已保存知识项" });
-                        }
-                        Err(e) => {
-                            st.show_toast(format!("保存失败: {e}"));
-                        }
+                if res.is_ok() {
+                    let _ = rt.sync_all().await;
+                }
+                let reloaded = rt.load_all_knowledge_items();
+                let stats = rt.stats_snapshot().await;
+                let _ = tx.send(Box::new(move |st| match res {
+                    Ok(()) => {
+                        st.set_items(reloaded);
+                        st.set_stats(stats);
+                        st.show_toast(if is_new {
+                            "已新建知识项"
+                        } else {
+                            "已保存知识项"
+                        });
+                    }
+                    Err(e) => {
+                        st.show_toast(format!("保存失败: {e}"));
                     }
                 }));
             });
@@ -214,18 +249,19 @@ impl Component for AmemoryGuiComponent {
             let tx = delete_tx.clone();
             spawn_task(async move {
                 let res = rt.delete_knowledge_item(&id);
-                let _ = tx.send(Box::new(move |st| {
-                    match res {
-                        Ok(()) => {
-                            let reloaded = rt.load_all_knowledge_items();
-                            let stats = rt.get_stats_snapshot();
-                            st.set_items(reloaded);
-                            st.set_stats(stats);
-                            st.show_toast("已删除知识项");
-                        }
-                        Err(e) => {
-                            st.show_toast(format!("删除失败: {e}"));
-                        }
+                if res.is_ok() {
+                    let _ = rt.sync_all().await;
+                }
+                let reloaded = rt.load_all_knowledge_items();
+                let stats = rt.stats_snapshot().await;
+                let _ = tx.send(Box::new(move |st| match res {
+                    Ok(()) => {
+                        st.set_items(reloaded);
+                        st.set_stats(stats);
+                        st.show_toast("已删除知识项");
+                    }
+                    Err(e) => {
+                        st.show_toast(format!("删除失败: {e}"));
                     }
                 }));
             });

@@ -17,7 +17,7 @@ use xcat_mcp::DocumentImportPolicy;
 pub const DEFAULT_CONFIG_PATH: &str = "etc/config.toml";
 
 /// Top-level runtime configuration loaded from `etc/config.toml`.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AppConfig {
     /// Server mode and MCP HTTP transport settings.
     #[serde(default)]
@@ -66,8 +66,8 @@ impl AppConfig {
             std::fs::create_dir_all(parent)
                 .map_err(|e| eyre!("创建配置目录 `{}` 失败: {e}", parent.display()))?;
         }
-        let toml_str = toml::to_string_pretty(self)
-            .map_err(|e| eyre!("序列化配置为 TOML 失败: {e}"))?;
+        let toml_str =
+            toml::to_string_pretty(self).map_err(|e| eyre!("序列化配置为 TOML 失败: {e}"))?;
         std::fs::write(&full_path, toml_str)
             .map_err(|e| eyre!("写入配置文件 `{}` 失败: {e}", full_path.display()))
     }
@@ -216,7 +216,7 @@ pub enum ServerMode {
 }
 
 /// Server transport and endpoint configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ServerConfig {
     /// Execution mode (`sync`, `mcp-stdio`, `mcp-http`, or `server`).
     #[serde(default)]
@@ -265,7 +265,7 @@ impl ServerConfig {
 }
 
 /// Paths for Skill and Book catalog directories on disk.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StorageConfig {
     /// Root directory containing Skill subdirectories (`./resource/skills` by default).
     #[serde(default = "default_skills_dir")]
@@ -285,7 +285,7 @@ impl Default for StorageConfig {
 }
 
 /// `[xerj]` configuration section in `etc/config.toml`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct XerjSectionConfig {
     /// Directory where XERJ stores indices, segments, WAL, and the sync ledger.
     #[serde(default = "default_xerj_data_dir")]
@@ -342,7 +342,7 @@ impl Default for XerjSectionConfig {
 }
 
 /// Security limits for document imports into Books.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DocumentImportConfig {
     /// Allowed local filesystem root directories for `file_path` imports (`["./resource/uploads"]` by default).
     #[serde(default = "default_allowed_roots")]
@@ -362,7 +362,7 @@ impl Default for DocumentImportConfig {
 }
 
 /// `[logger]` section in `etc/config.toml`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LoggerSectionConfig {
     /// Log level string (`error`, `warn`, `info`, `debug`, `trace`).
     #[serde(default = "default_log_level")]
@@ -390,7 +390,7 @@ impl Default for LoggerSectionConfig {
 }
 
 /// `[panic]` section in `etc/config.toml`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PanicSectionConfig {
     /// Whether the process should exit after recording a panic.
     #[serde(default = "default_true")]

@@ -10,29 +10,45 @@ use crate::core::settings::WindowPositionMode;
 pub fn position_window(mode: WindowPositionMode, width: f32, height: f32) {
     let (screen_w, screen_h) = get_screen_size();
 
-    match mode {
+    let (x, y) = match mode {
         WindowPositionMode::Center | WindowPositionMode::Remember => {
-            let x = ((screen_w - width) / 2.0).max(0.0);
-            let y = ((screen_h - height) / 2.0).max(0.0);
-            set_frame(WindowFrame {
-                x: Some(Points(x)),
-                y: Some(Points(y)),
-                width: Some(Points(width)),
-                height: Some(Points(height)),
-                animated: Some(false),
-            });
+            let cx = ((screen_w - width) / 2.0).max(0.0);
+            let cy = ((screen_h - height) / 2.0).max(0.0);
+            (cx, cy)
         }
         WindowPositionMode::FollowMouse => {
             let (mouse_x, mouse_y) = get_cursor_pos();
-            let x = (mouse_x - width / 2.0).clamp(0.0, screen_w - width);
-            let y = (mouse_y - 20.0).clamp(0.0, screen_h - height);
-            set_frame(WindowFrame {
-                x: Some(Points(x)),
-                y: Some(Points(y)),
-                width: Some(Points(width)),
-                height: Some(Points(height)),
-                animated: Some(false),
-            });
+            let fx = (mouse_x - width / 2.0).clamp(0.0, screen_w - width);
+            let fy = (mouse_y - 20.0).clamp(0.0, screen_h - height);
+            (fx, fy)
+        }
+    };
+
+    set_frame(WindowFrame {
+        x: Some(Points(x)),
+        y: Some(Points(y)),
+        width: Some(Points(width)),
+        height: Some(Points(height)),
+        animated: Some(false),
+    });
+
+    #[cfg(windows)]
+    unsafe {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
+            FindWindowW, SetWindowPos, SWP_NOZORDER,
+        };
+        let title: Vec<u16> = "amemory\0".encode_utf16().collect();
+        let hwnd = FindWindowW(std::ptr::null(), title.as_ptr());
+        if hwnd != 0 {
+            SetWindowPos(
+                hwnd,
+                0,
+                x as i32,
+                y as i32,
+                width as i32,
+                height as i32,
+                SWP_NOZORDER,
+            );
         }
     }
 }
@@ -40,7 +56,9 @@ pub fn position_window(mode: WindowPositionMode, width: f32, height: f32) {
 fn get_screen_size() -> (f32, f32) {
     #[cfg(windows)]
     unsafe {
-        use windows_sys::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN};
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
+            GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN,
+        };
         let w = GetSystemMetrics(SM_CXSCREEN) as f32;
         let h = GetSystemMetrics(SM_CYSCREEN) as f32;
         if w > 0.0 && h > 0.0 {

@@ -9,12 +9,12 @@ use super::theme::ClippiTheme;
 use crate::core::i18n_keys::I18nKey;
 use crate::state::app::{ActiveView, AppStore};
 
-pub mod general;
-pub mod storage;
-pub mod xerj_engine;
-pub mod mcp_hotkey;
 pub mod data_logger;
+pub mod general;
+pub mod mcp_hotkey;
+pub mod storage;
 pub mod version;
+pub mod xerj_engine;
 
 /// Total number of tabs in the settings panel.
 pub const SETTINGS_TAB_COUNT: usize = 6;
@@ -72,21 +72,11 @@ pub fn setting_row(
             view()
                 .flex_col()
                 .gap(px(2.0))
-                .child(
-                    text(label)
-                        .text_color(text_1)
-                        .text_xs(),
-                )
-                .child(
-                    when(
-                        move || description.is_some(),
-                        move || {
-                            text(description.unwrap_or(""))
-                                .text_color(text_3)
-                                .text_xs()
-                        },
-                    ),
-                ),
+                .child(text(label).text_color(text_1).text_xs())
+                .child(when(
+                    move || description.is_some(),
+                    move || text(description.unwrap_or("")).text_color(text_3).text_xs(),
+                )),
         )
         .child(control)
         .into_element()
@@ -175,100 +165,113 @@ pub fn settings_panel_view(
                 .items_center()
                 .border_b(px(1.0))
                 .border_color(divider)
-                .child(
-                    tab_button(0, tab_titles[0], active_tab, accent, text_3, text_1),
-                )
-                .child(
-                    tab_button(1, tab_titles[1], active_tab, accent, text_3, text_1),
-                )
-                .child(
-                    tab_button(2, tab_titles[2], active_tab, accent, text_3, text_1),
-                )
-                .child(
-                    tab_button(3, tab_titles[3], active_tab, accent, text_3, text_1),
-                )
-                .child(
-                    tab_button(4, tab_titles[4], active_tab, accent, text_3, text_1),
-                )
-                .child(
-                    tab_button(5, tab_titles[5], active_tab, accent, text_3, text_1),
-                ),
+                .child(tab_button(
+                    0,
+                    tab_titles[0],
+                    active_tab,
+                    store,
+                    accent,
+                    text_3,
+                    text_1,
+                ))
+                .child(tab_button(
+                    1,
+                    tab_titles[1],
+                    active_tab,
+                    store,
+                    accent,
+                    text_3,
+                    text_1,
+                ))
+                .child(tab_button(
+                    2,
+                    tab_titles[2],
+                    active_tab,
+                    store,
+                    accent,
+                    text_3,
+                    text_1,
+                ))
+                .child(tab_button(
+                    3,
+                    tab_titles[3],
+                    active_tab,
+                    store,
+                    accent,
+                    text_3,
+                    text_1,
+                ))
+                .child(tab_button(
+                    4,
+                    tab_titles[4],
+                    active_tab,
+                    store,
+                    accent,
+                    text_3,
+                    text_1,
+                ))
+                .child(tab_button(
+                    5,
+                    tab_titles[5],
+                    active_tab,
+                    store,
+                    accent,
+                    text_3,
+                    text_1,
+                )),
         )
         // ── 3. Content Router ──
         .child(
-            view()
-                .flex_1()
-                .w_full()
-                .p(px(8.0))
-                .child(
-                    scroll()
+            view().flex_1().w_full().p(px(8.0)).child(
+                scroll().w_full().h_full().child(
+                    view()
                         .w_full()
-                        .h_full()
-                        .child(
-                            view()
-                                .w_full()
-                                .flex_col()
-                                .gap(px(10.0))
-                                .child(
-                                    when(
-                                        move || active_tab.get() == 0,
-                                        move || general::render_general_tab(store, theme),
-                                    ),
+                        .flex_col()
+                        .gap(px(10.0))
+                        .child(when(
+                            move || active_tab.get() == 0,
+                            move || general::render_general_tab(store, theme),
+                        ))
+                        .child(when(
+                            move || active_tab.get() == 1,
+                            move || storage::render_storage_tab(store, theme),
+                        ))
+                        .child(when(move || active_tab.get() == 2, {
+                            let on_rebuild = on_rebuild_index;
+                            move || {
+                                xerj_engine::render_xerj_tab(store, theme, {
+                                    let f = on_rebuild.clone();
+                                    move || f()
+                                })
+                            }
+                        }))
+                        .child(when(
+                            move || active_tab.get() == 3,
+                            move || mcp_hotkey::render_mcp_hotkey_tab(store, theme),
+                        ))
+                        .child(when(
+                            move || active_tab.get() == 4,
+                            move || data_logger::render_data_logger_tab(store, theme),
+                        ))
+                        .child(when(move || active_tab.get() == 5, {
+                            let check = on_check_update;
+                            let dl = on_start_download;
+                            let restart = on_restart_update;
+                            move || {
+                                let c = check.clone();
+                                let d = dl.clone();
+                                let r = restart.clone();
+                                version::render_version_tab(
+                                    store,
+                                    theme,
+                                    move || c(),
+                                    move || d(),
+                                    move || r(),
                                 )
-                                .child(
-                                    when(
-                                        move || active_tab.get() == 1,
-                                        move || storage::render_storage_tab(store, theme),
-                                    ),
-                                )
-                                .child(
-                                    when(
-                                        move || active_tab.get() == 2,
-                                        {
-                                            let on_rebuild = on_rebuild_index;
-                                            move || xerj_engine::render_xerj_tab(store, theme, {
-                                                let f = on_rebuild.clone();
-                                                move || f()
-                                            })
-                                        },
-                                    ),
-                                )
-                                .child(
-                                    when(
-                                        move || active_tab.get() == 3,
-                                        move || mcp_hotkey::render_mcp_hotkey_tab(store, theme),
-                                    ),
-                                )
-                                .child(
-                                    when(
-                                        move || active_tab.get() == 4,
-                                        move || data_logger::render_data_logger_tab(store, theme),
-                                    ),
-                                )
-                                .child(
-                                    when(
-                                        move || active_tab.get() == 5,
-                                        {
-                                            let check = on_check_update;
-                                            let dl = on_start_download;
-                                            let restart = on_restart_update;
-                                            move || {
-                                                let c = check.clone();
-                                                let d = dl.clone();
-                                                let r = restart.clone();
-                                                version::render_version_tab(
-                                                    store,
-                                                    theme,
-                                                    move || c(),
-                                                    move || d(),
-                                                    move || r(),
-                                                )
-                                            }
-                                        },
-                                    ),
-                                ),
-                        ),
+                            }
+                        })),
                 ),
+            ),
         )
 }
 
@@ -276,6 +279,7 @@ fn tab_button(
     index: usize,
     title: &'static str,
     active_tab: Signal<usize>,
+    store: AppStore,
     accent: nsh_core::prelude::Rgba,
     text_muted: nsh_core::prelude::Rgba,
     text_active: nsh_core::prelude::Rgba,
@@ -286,10 +290,17 @@ fn tab_button(
         .items_center()
         .justify_center()
         .cursor_pointer()
-        .border_b(move || if active_tab.get() == index { px(2.0) } else { px(0.0) })
+        .border_b(move || {
+            if active_tab.get() == index {
+                px(2.0)
+            } else {
+                px(0.0)
+            }
+        })
         .border_color(accent)
         .on_press(move || {
             active_tab.set(index);
+            store.active_view.set(ActiveView::Settings(index));
         })
         .child(
             when(

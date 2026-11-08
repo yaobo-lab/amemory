@@ -58,8 +58,8 @@ pub async fn download_file(
 
 /// Verify the SHA256 digest of `file_path`.
 pub fn verify_sha256(file_path: &Path, expected_hex: &str) -> Result<(), String> {
-    let mut file = File::open(file_path)
-        .map_err(|e| format!("{}: {e}", I18nKey::UpdateErrVerify.text()))?;
+    let mut file =
+        File::open(file_path).map_err(|e| format!("{}: {e}", I18nKey::UpdateErrVerify.text()))?;
     let mut hasher = Sha256::new();
     let mut buffer = [0u8; 8192];
 

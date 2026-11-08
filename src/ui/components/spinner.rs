@@ -8,14 +8,10 @@ use crate::ui::theme::ClippiTheme;
 /// Render sync or loading indicator.
 #[must_use]
 pub fn loading_spinner(theme: ClippiTheme) -> impl IntoElement {
-    view()
-        .size(px(16.0))
-        .items_center()
-        .justify_center()
-        .child(
-            text(glyphs::SYNC)
-                .font_family("iconfont")
-                .text_color(theme.accent)
-                .text_sm(),
-        )
+    view().size(px(16.0)).items_center().justify_center().child(
+        text(glyphs::SYNC)
+            .font_family("iconfont")
+            .text_color(theme.accent)
+            .text_sm(),
+    )
 }

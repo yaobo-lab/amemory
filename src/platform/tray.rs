@@ -11,8 +11,7 @@ pub fn configure_desktop_menus() {
         vec![
             MenuItem::new(I18nKey::TrayShow.text()).on_select(order_front),
             MenuItem::separator(),
-            MenuItem::new(I18nKey::TrayQuit.text())
-                .on_select(|| std::process::exit(0)),
+            MenuItem::new(I18nKey::TrayQuit.text()).on_select(|| std::process::exit(0)),
         ],
     );
 

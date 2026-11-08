@@ -18,6 +18,7 @@ pub fn stats_overview_view(store: AppStore, theme: ClippiTheme) -> impl IntoElem
     let text_2 = theme.text_2;
     let text_3 = theme.text_3;
     let accent = theme.accent;
+    let accent_soft = theme.accent_soft;
 
     let stats = store.stats;
     let filters = store.filters;
@@ -66,9 +67,21 @@ pub fn stats_overview_view(store: AppStore, theme: ClippiTheme) -> impl IntoElem
                         .flex_1()
                         .h(px(44.0))
                         .rounded(px(8.0))
-                        .bg(surface)
+                        .bg(move || {
+                            if filters.get().kind == Some(ItemKind::Skill) {
+                                accent_soft
+                            } else {
+                                surface
+                            }
+                        })
                         .border_1()
-                        .border_color(divider)
+                        .border_color(move || {
+                            if filters.get().kind == Some(ItemKind::Skill) {
+                                accent
+                            } else {
+                                divider
+                            }
+                        })
                         .p(px(6.0))
                         .cursor_pointer()
                         .active(|s| s.opacity(0.7))
@@ -79,12 +92,23 @@ pub fn stats_overview_view(store: AppStore, theme: ClippiTheme) -> impl IntoElem
                                 .flex_row()
                                 .items_center()
                                 .gap(px(4.0))
-                                .child(text(glyphs::SKILL).font_family("iconfont").text_color(accent).text_sm())
                                 .child(
-                                    text(move || format!("{} {}", stats.with(|s| s.skills_count), I18nKey::StatsSkills.text()))
-                                        .text_color(text_1)
-                                        .font_weight(FontWeight::BOLD)
-                                        .text_xs(),
+                                    text(glyphs::SKILL)
+                                        .font_family("iconfont")
+                                        .text_color(accent)
+                                        .text_sm(),
+                                )
+                                .child(
+                                    text(move || {
+                                        format!(
+                                            "{} {}",
+                                            stats.with(|s| s.skills_count),
+                                            I18nKey::StatsSkills.text()
+                                        )
+                                    })
+                                    .text_color(text_1)
+                                    .font_weight(FontWeight::BOLD)
+                                    .text_xs(),
                                 ),
                         )
                         .child(
@@ -105,9 +129,21 @@ pub fn stats_overview_view(store: AppStore, theme: ClippiTheme) -> impl IntoElem
                         .flex_1()
                         .h(px(44.0))
                         .rounded(px(8.0))
-                        .bg(surface)
+                        .bg(move || {
+                            if filters.get().kind == Some(ItemKind::Book) {
+                                accent_soft
+                            } else {
+                                surface
+                            }
+                        })
                         .border_1()
-                        .border_color(divider)
+                        .border_color(move || {
+                            if filters.get().kind == Some(ItemKind::Book) {
+                                accent
+                            } else {
+                                divider
+                            }
+                        })
                         .p(px(6.0))
                         .cursor_pointer()
                         .active(|s| s.opacity(0.7))
@@ -118,12 +154,23 @@ pub fn stats_overview_view(store: AppStore, theme: ClippiTheme) -> impl IntoElem
                                 .flex_row()
                                 .items_center()
                                 .gap(px(4.0))
-                                .child(text(glyphs::BOOK).font_family("iconfont").text_color(accent).text_sm())
                                 .child(
-                                    text(move || format!("{} {}", stats.with(|s| s.books_count), I18nKey::StatsBooks.text()))
-                                        .text_color(text_1)
-                                        .font_weight(FontWeight::BOLD)
-                                        .text_xs(),
+                                    text(glyphs::BOOK)
+                                        .font_family("iconfont")
+                                        .text_color(accent)
+                                        .text_sm(),
+                                )
+                                .child(
+                                    text(move || {
+                                        format!(
+                                            "{} {}",
+                                            stats.with(|s| s.books_count),
+                                            I18nKey::StatsBooks.text()
+                                        )
+                                    })
+                                    .text_color(text_1)
+                                    .font_weight(FontWeight::BOLD)
+                                    .text_xs(),
                                 ),
                         )
                         .child(
@@ -144,9 +191,21 @@ pub fn stats_overview_view(store: AppStore, theme: ClippiTheme) -> impl IntoElem
                         .flex_1()
                         .h(px(44.0))
                         .rounded(px(8.0))
-                        .bg(surface)
+                        .bg(move || {
+                            if filters.get().kind == Some(ItemKind::Memory) {
+                                accent_soft
+                            } else {
+                                surface
+                            }
+                        })
                         .border_1()
-                        .border_color(divider)
+                        .border_color(move || {
+                            if filters.get().kind == Some(ItemKind::Memory) {
+                                accent
+                            } else {
+                                divider
+                            }
+                        })
                         .p(px(6.0))
                         .cursor_pointer()
                         .active(|s| s.opacity(0.7))
@@ -157,12 +216,23 @@ pub fn stats_overview_view(store: AppStore, theme: ClippiTheme) -> impl IntoElem
                                 .flex_row()
                                 .items_center()
                                 .gap(px(4.0))
-                                .child(text(glyphs::MEMORY).font_family("iconfont").text_color(accent).text_sm())
                                 .child(
-                                    text(move || format!("{} {}", stats.with(|s| s.memory_docs), I18nKey::StatsMemory.text()))
-                                        .text_color(text_1)
-                                        .font_weight(FontWeight::BOLD)
-                                        .text_xs(),
+                                    text(glyphs::MEMORY)
+                                        .font_family("iconfont")
+                                        .text_color(accent)
+                                        .text_sm(),
+                                )
+                                .child(
+                                    text(move || {
+                                        format!(
+                                            "{} {}",
+                                            stats.with(|s| s.memory_docs),
+                                            I18nKey::StatsMemory.text()
+                                        )
+                                    })
+                                    .text_color(text_1)
+                                    .font_weight(FontWeight::BOLD)
+                                    .text_xs(),
                                 ),
                         )
                         .child(
@@ -191,17 +261,14 @@ pub fn stats_overview_view(store: AppStore, theme: ClippiTheme) -> impl IntoElem
                         .items_center()
                         .gap(px(6.0))
                         // Health dot
-                        .child(
-                            view()
-                                .size(px(6.0))
-                                .rounded(px(3.0))
-                                .bg(move || match stats.with(|s| s.health) {
-                                    HealthLevel::Green => accent,
-                                    HealthLevel::Yellow => theme.fav_color,
-                                    HealthLevel::Red => theme.danger,
-                                    HealthLevel::Unknown => text_3,
-                                }),
-                        )
+                        .child(view().size(px(6.0)).rounded(px(3.0)).bg(move || {
+                            match stats.with(|s| s.health) {
+                                HealthLevel::Green => accent,
+                                HealthLevel::Yellow => theme.fav_color,
+                                HealthLevel::Red => theme.danger,
+                                HealthLevel::Unknown => text_3,
+                            }
+                        }))
                         .child(
                             text("XERJ")
                                 .text_color(text_1)
@@ -209,9 +276,18 @@ pub fn stats_overview_view(store: AppStore, theme: ClippiTheme) -> impl IntoElem
                                 .text_xs(),
                         )
                         .child(
-                            text(move || format!("Docs: {} · Segs: {} · 磁盘: {}", stats.with(|s| s.total_docs), stats.with(|s| s.index_count), stats.with(super::super::core::types::StatsSnapshot::disk_usage_label)))
-                                .text_color(text_2)
-                                .text_xs(),
+                            text(move || {
+                                format!(
+                                    "Docs: {} · Segs: {} · 磁盘: {}",
+                                    stats.with(|s| s.total_docs),
+                                    stats.with(|s| s.index_count),
+                                    stats.with(
+                                        super::super::core::types::StatsSnapshot::disk_usage_label
+                                    )
+                                )
+                            })
+                            .text_color(text_2)
+                            .text_xs(),
                         ),
                 )
                 .child(

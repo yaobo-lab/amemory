@@ -49,11 +49,7 @@ pub fn type_filter_config_view(
                             .on_press(move || {
                                 on_close();
                             })
-                            .child(
-                                text("✕")
-                                    .text_color(text_3)
-                                    .text_xs(),
-                            ),
+                            .child(text("✕").text_color(text_3).text_xs()),
                     ),
             )
             // Description
@@ -63,35 +59,67 @@ pub fn type_filter_config_view(
                     .text_xs(),
             )
             // Type toggle rows
-            .child(type_toggle_row(store, ItemKind::Skill, "Skills 技能", "Prompt 模板与执行动作", theme))
-            .child(type_toggle_row(store, ItemKind::Book, "Books 书本", "知识书本与参考手册", theme))
-            .child(type_toggle_row(store, ItemKind::Document, "Docs 文档", "长文档与分段章节", theme))
-            .child(type_toggle_row(store, ItemKind::Memory, "Memory 记忆", "XERJ 实时记忆片段", theme))
-            .child(type_toggle_row(store, ItemKind::Script, "Scripts 脚本", "自动化脚本与工具代码", theme))
-            .child(type_toggle_row(store, ItemKind::Note, "Notes 便签", "临时笔记与参考文档", theme))
+            .child(type_toggle_row(
+                store,
+                ItemKind::Skill,
+                "Skills 技能",
+                "Prompt 模板与执行动作",
+                theme,
+            ))
+            .child(type_toggle_row(
+                store,
+                ItemKind::Book,
+                "Books 书本",
+                "知识书本与参考手册",
+                theme,
+            ))
+            .child(type_toggle_row(
+                store,
+                ItemKind::Document,
+                "Docs 文档",
+                "长文档与分段章节",
+                theme,
+            ))
+            .child(type_toggle_row(
+                store,
+                ItemKind::Memory,
+                "Memory 记忆",
+                "XERJ 实时记忆片段",
+                theme,
+            ))
+            .child(type_toggle_row(
+                store,
+                ItemKind::Script,
+                "Scripts 脚本",
+                "自动化脚本与工具代码",
+                theme,
+            ))
+            .child(type_toggle_row(
+                store,
+                ItemKind::Note,
+                "Notes 便签",
+                "临时笔记与参考文档",
+                theme,
+            ))
             // Bottom Done button
             .child(
-                view()
-                    .w_full()
-                    .items_end()
-                    .pt(px(6.0))
-                    .child(
-                        view()
-                            .px(px(14.0))
-                            .py(px(4.0))
-                            .rounded(px(5.0))
-                            .bg(accent)
-                            .cursor_pointer()
-                            .on_press(move || {
-                                on_close();
-                            })
-                            .child(
-                                text(I18nKey::DialogConfirm.text())
-                                    .text_color(rgb(0xffffff))
-                                    .font_weight(FontWeight::BOLD)
-                                    .text_xs(),
-                            ),
-                    ),
+                view().w_full().items_end().pt(px(6.0)).child(
+                    view()
+                        .px(px(14.0))
+                        .py(px(4.0))
+                        .rounded(px(5.0))
+                        .bg(accent)
+                        .cursor_pointer()
+                        .on_press(move || {
+                            on_close();
+                        })
+                        .child(
+                            text(I18nKey::DialogConfirm.text())
+                                .text_color(rgb(0xffffff))
+                                .font_weight(FontWeight::BOLD)
+                                .text_xs(),
+                        ),
+                ),
             ),
         theme,
         on_close,
@@ -119,27 +147,13 @@ fn type_toggle_row(
         .child(
             view()
                 .flex_col()
-                .child(
-                    text(label)
-                        .text_color(text_1)
-                        .text_xs(),
-                )
-                .child(
-                    text(desc)
-                        .text_color(text_3)
-                        .text_xs(),
-                ),
+                .child(text(label).text_color(text_1).text_xs())
+                .child(text(desc).text_color(text_3).text_xs()),
         )
-        .child(
-            render_toggle(
-                initial_enabled,
-                theme,
-                move |next| {
-                    store.update_settings(|s| s.set_kind_visible(kind, next));
-                    if !next && store.filters.get_untracked().kind == Some(kind) {
-                        store.filters.update(|f| f.kind = None);
-                    }
-                },
-            ),
-        )
+        .child(render_toggle(initial_enabled, theme, move |next| {
+            store.update_settings(|s| s.set_kind_visible(kind, next));
+            if !next && store.filters.get_untracked().kind == Some(kind) {
+                store.filters.update(|f| f.kind = None);
+            }
+        }))
 }

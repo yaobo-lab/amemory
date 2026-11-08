@@ -70,26 +70,20 @@ pub fn search_box_view(
                         .text_color(move || text_1)
                         .text_xs(),
                 )
-                .child(
-                    when(
-                        move || !query_signal.get().is_empty(),
-                        move || {
-                            view()
-                                .px(px(4.0))
-                                .cursor_pointer()
-                                .on_press(move || {
-                                    query_signal.set(String::new());
-                                    on_search(String::new());
-                                })
-                                .tooltip(tooltip_box("清空搜索关键词", theme))
-                                .child(
-                                    text("✕")
-                                        .text_color(text_3)
-                                        .text_xs(),
-                                )
-                        },
-                    ),
-                ),
+                .child(when(
+                    move || !query_signal.get().is_empty(),
+                    move || {
+                        view()
+                            .px(px(4.0))
+                            .cursor_pointer()
+                            .on_press(move || {
+                                query_signal.set(String::new());
+                                on_search(String::new());
+                            })
+                            .tooltip(tooltip_box("清空搜索关键词", theme))
+                            .child(text("✕").text_color(text_3).text_xs())
+                    },
+                )),
         )
         // Expandable "+" Button
         .child(
@@ -118,19 +112,23 @@ pub fn search_box_view(
                 })
                 .child(
                     text(glyphs::PLUS)
-                        .text_color(move || if is_expanded.get() { rgb(0xffffff) } else { text_2 })
+                        .text_color(move || {
+                            if is_expanded.get() {
+                                rgb(0xffffff)
+                            } else {
+                                text_2
+                            }
+                        })
                         .text_sm(),
                 )
-                .child(
-                    when(
-                        move || is_expanded.get(),
-                        move || {
-                            text(I18nKey::EditTitleNew.text())
-                                .text_color(rgb(0xffffff))
-                                .font_weight(FontWeight::BOLD)
-                                .text_xs()
-                        },
-                    ),
-                ),
+                .child(when(
+                    move || is_expanded.get(),
+                    move || {
+                        text(I18nKey::EditTitleNew.text())
+                            .text_color(rgb(0xffffff))
+                            .font_weight(FontWeight::BOLD)
+                            .text_xs()
+                    },
+                )),
         )
 }

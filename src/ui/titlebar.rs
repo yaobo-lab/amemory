@@ -29,7 +29,11 @@ pub fn titlebar_view(
         let next = !is_pinned.get_untracked();
         is_pinned.set(next);
         crate::platform::window_frame::set_always_on_top(next);
-        store.show_toast(if next { "已开启窗口置顶" } else { "已取消窗口置顶" });
+        store.show_toast(if next {
+            "已开启窗口置顶"
+        } else {
+            "已取消窗口置顶"
+        });
     };
 
     let toggle_stats = move || {
@@ -44,7 +48,11 @@ pub fn titlebar_view(
             f.favorites_only = !f.favorites_only;
             next = f.favorites_only;
         });
-        store.show_toast(if next { "已筛选：仅看收藏" } else { "已显示全部条目" });
+        store.show_toast(if next {
+            "已筛选：仅看收藏"
+        } else {
+            "已显示全部条目"
+        });
     };
 
     let open_settings = move || {
@@ -65,12 +73,7 @@ pub fn titlebar_view(
         .pl(px(10.0))
         .pr(px(4.0))
         // Window drag spacer area on the left (title moved to native window frame)
-        .child(
-            view()
-                .flex_1()
-                .h_full()
-                .window_drag(true),
-        )
+        .child(view().flex_1().h_full().window_drag(true))
         // Right-side 28x28 action icon buttons
         .child(
             view()
@@ -128,7 +131,13 @@ pub fn titlebar_view(
                         .child(
                             text(glyphs::STAR)
                                 .font_family("iconfont")
-                                .text_color(move || if filters.with(|f| f.favorites_only) { theme.fav_color } else { text_2 })
+                                .text_color(move || {
+                                    if filters.with(|f| f.favorites_only) {
+                                        theme.fav_color
+                                    } else {
+                                        text_2
+                                    }
+                                })
                                 .text_sm(),
                         ),
                 )
@@ -170,26 +179,26 @@ pub fn titlebar_view(
                                         .text_color(text_2)
                                         .text_sm(),
                                 )
-                                .child(
-                                    when(
-                                        move || {
-                                            matches!(
-                                                update_phase.get(),
-                                                crate::services::update::UpdatePhase::UpdateAvailable
-                                                    | crate::services::update::UpdatePhase::Available(_)
-                                            )
-                                        },
-                                        move || {
-                                            view()
-                                                .absolute()
-                                                .top(px(-1.0))
-                                                .right(px(-1.0))
-                                                .size(px(6.0))
-                                                .rounded(px(3.0))
-                                                .bg(accent)
-                                        },
-                                    ),
-                                ),
+                                .child(when(
+                                    move || {
+                                        matches!(
+                                            update_phase.get(),
+                                            crate::services::update::UpdatePhase::UpdateAvailable
+                                                | crate::services::update::UpdatePhase::Available(
+                                                    _
+                                                )
+                                        )
+                                    },
+                                    move || {
+                                        view()
+                                            .absolute()
+                                            .top(px(-1.0))
+                                            .right(px(-1.0))
+                                            .size(px(6.0))
+                                            .rounded(px(3.0))
+                                            .bg(accent)
+                                    },
+                                )),
                         ),
                 ),
         )

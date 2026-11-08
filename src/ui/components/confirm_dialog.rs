@@ -49,11 +49,7 @@ pub fn confirm_dialog_view(
                     .font_weight(FontWeight::BOLD)
                     .text_xs(),
             )
-            .child(
-                text(message)
-                    .text_color(text_2)
-                    .text_xs(),
-            )
+            .child(text(message).text_color(text_2).text_xs())
             .child(
                 view()
                     .flex_row()

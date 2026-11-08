@@ -30,11 +30,7 @@ pub fn toast_view(message: impl Into<String>, theme: ClippiTheme) -> impl IntoEl
         .border_color(divider)
         .items_center()
         .justify_center()
-        .child(
-            text(message)
-                .text_color(text_1)
-                .text_xs(),
-        )
+        .child(text(message).text_color(text_1).text_xs())
 }
 
 /// Render compact hover tooltip pill for action buttons.
@@ -51,9 +47,5 @@ pub fn tooltip_box(label: impl Into<String>, theme: ClippiTheme) -> nsh_base::To
         .border_color(theme.divider)
         .items_center()
         .justify_center()
-        .child(
-            text(label)
-                .text_color(theme.text_1)
-                .text_xs(),
-        )
+        .child(text(label).text_color(theme.text_1).text_xs())
 }

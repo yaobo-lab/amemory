@@ -54,9 +54,10 @@ pub fn play_copy_sound_name(filename: &str) {
     if let Ok(mut last) = LAST_PLAY.lock() {
         let now = Instant::now();
         if let Some(prev) = *last
-            && now.duration_since(prev) < PLAY_DEBOUNCE {
-                return;
-            }
+            && now.duration_since(prev) < PLAY_DEBOUNCE
+        {
+            return;
+        }
         *last = Some(now);
     }
 

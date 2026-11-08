@@ -40,12 +40,15 @@ pub fn bottom_bar_view(
                 .flex_row()
                 .items_center()
                 .gap(px(6.0))
-                .child(
-                    view()
-                        .size(px(6.0))
-                        .rounded(px(3.0))
-                        .bg(accent),
-                )
+                .cursor_pointer()
+                .hover(move |s| s.opacity(0.8))
+                .on_press(move || {
+                    let next = !store.show_stats_overview.get();
+                    store.show_stats_overview.set(next);
+                    store.update_settings(|s| s.show_stats_overview = next);
+                })
+                .tooltip(tooltip_box("点击展开/折叠统计概览", theme))
+                .child(view().size(px(6.0)).rounded(px(3.0)).bg(accent))
                 .child(
                     text(move || {
                         format!(
@@ -75,7 +78,12 @@ pub fn bottom_bar_view(
                         .hover(move |s| s.bg(btn_hover))
                         .on_press(on_quick_sync)
                         .tooltip(tooltip_box(I18nKey::BottomQuickSync.text(), theme))
-                        .child(text(glyphs::SYNC).font_family("iconfont").text_color(text_2).text_xs()),
+                        .child(
+                            text(glyphs::SYNC)
+                                .font_family("iconfont")
+                                .text_color(text_2)
+                                .text_xs(),
+                        ),
                 )
                 .child(
                     view()
@@ -87,7 +95,12 @@ pub fn bottom_bar_view(
                         .hover(move |s| s.bg(btn_hover))
                         .on_press(on_copy_endpoint)
                         .tooltip(tooltip_box(I18nKey::BottomCopyEndpoint.text(), theme))
-                        .child(text(glyphs::COPY).font_family("iconfont").text_color(text_2).text_xs()),
+                        .child(
+                            text(glyphs::COPY)
+                                .font_family("iconfont")
+                                .text_color(text_2)
+                                .text_xs(),
+                        ),
                 ),
         )
 }
