@@ -308,4 +308,18 @@ impl AppStore {
         let s = self.settings.get();
         (s.card_height_mode.height_px() * s.font_scale.clamp(0.8, 1.4)).round()
     }
+
+    /// Resolved reactive theme matching current user settings.
+    #[must_use]
+    pub fn theme(&self) -> crate::ui::theme::ClippiTheme {
+        let s = self.settings.get();
+        crate::ui::theme::ClippiTheme::resolve_with_accent(s.theme_mode, s.accent_color.as_deref())
+    }
+
+    /// Return translated string for the given i18n key and track language setting reactively.
+    #[must_use]
+    pub fn tr(&self, key: crate::core::i18n_keys::I18nKey) -> &'static str {
+        let _ = self.settings.get();
+        key.text()
+    }
 }

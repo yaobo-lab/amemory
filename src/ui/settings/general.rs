@@ -2,268 +2,224 @@
 
 use nsh_core::prelude::*;
 
-use super::{setting_row, settings_group};
+use super::{setting_row_tr, settings_group_reactive};
+use crate::core::i18n_keys::I18nKey;
 use crate::core::settings::{CardHeightMode, ThemeMode, WindowPositionMode};
 use crate::platform::window_frame::{DEFAULT_WINDOW_H, DEFAULT_WINDOW_W};
 use crate::state::app::AppStore;
 use crate::ui::components::slider::stepped_slider;
-use crate::ui::components::toggle::render_toggle;
+use crate::ui::components::toggle::render_store_toggle;
 use crate::ui::theme::ClippiTheme;
 
 /// Render Tab 1: General appearance and behavior settings.
 #[must_use]
-pub fn render_general_tab(store: AppStore, theme: ClippiTheme) -> impl IntoElement {
+pub fn render_general_tab(store: AppStore, _theme: ClippiTheme) -> impl IntoElement {
     let settings = store.settings;
-    let accent = theme.accent;
-    let divider = theme.divider;
-    let text_2 = theme.text_2;
 
     view()
         .w_full()
         .flex_col()
         .gap(px(10.0))
         // ── Group 1: Appearance ──
-        .child(settings_group(
-            "外观设置 (Appearance)",
-            theme,
+        .child(settings_group_reactive(
+            move || store.tr(I18nKey::AppearanceGroup).to_string(),
+            store,
             vec![
-                // Theme Mode
-                setting_row(
-                    "主题模式",
-                    Some("跟随系统、明亮或暗黑外观"),
+                // 1. Theme Mode
+                setting_row_tr(
+                    move || store.tr(I18nKey::ThemeMode).to_string(),
+                    Some(move || store.tr(I18nKey::ThemeDesc).to_string()),
                     view()
                         .flex_row()
                         .gap(px(4.0))
-                        .child(theme_btn(
-                            ThemeMode::System,
-                            "系统",
-                            store,
-                            accent,
-                            divider,
-                            text_2,
-                        ))
-                        .child(theme_btn(
-                            ThemeMode::Dark,
-                            "暗色",
-                            store,
-                            accent,
-                            divider,
-                            text_2,
-                        ))
-                        .child(theme_btn(
-                            ThemeMode::Light,
-                            "亮色",
-                            store,
-                            accent,
-                            divider,
-                            text_2,
-                        )),
-                    theme,
+                        .child(theme_btn(ThemeMode::System, I18nKey::ThemeSystem, store))
+                        .child(theme_btn(ThemeMode::Dark, I18nKey::ThemeDark, store))
+                        .child(theme_btn(ThemeMode::Light, I18nKey::ThemeLight, store)),
+                    store,
                 ),
-                // Accent Color
-                setting_row(
-                    "主题强调色",
-                    Some("自定义高亮与选中主色调"),
+                // 2. Accent Color
+                setting_row_tr(
+                    move || store.tr(I18nKey::AccentColor).to_string(),
+                    Some(move || store.tr(I18nKey::AccentDesc).to_string()),
                     view()
                         .flex_row()
                         .items_center()
-                        .gap(px(6.0))
-                        .child(accent_dot(None, 0x7ecba3, "默认绿", store, divider))
+                        .gap(px(8.0))
+                        .child(accent_dot(None, 0x7ecba3, I18nKey::AccentGreen, store))
                         .child(accent_dot(
                             Some("#3b82f6"),
                             0x3b82f6,
-                            "科技蓝",
+                            I18nKey::AccentBlue,
                             store,
-                            divider,
                         ))
                         .child(accent_dot(
                             Some("#8b5cf6"),
                             0x8b5cf6,
-                            "极光紫",
+                            I18nKey::AccentPurple,
                             store,
-                            divider,
                         ))
                         .child(accent_dot(
                             Some("#f59e0b"),
                             0xf59e0b,
-                            "琥珀金",
+                            I18nKey::AccentAmber,
                             store,
-                            divider,
                         ))
                         .child(accent_dot(
                             Some("#f43f5e"),
                             0xf43f5e,
-                            "珊瑚红",
+                            I18nKey::AccentCoral,
                             store,
-                            divider,
                         )),
-                    theme,
+                    store,
                 ),
-                // Language
-                setting_row(
-                    "界面语言",
-                    Some("切换中文或英文界面显示"),
+                // 3. Language
+                setting_row_tr(
+                    move || store.tr(I18nKey::Language).to_string(),
+                    Some(move || store.tr(I18nKey::LangDesc).to_string()),
                     view()
                         .flex_row()
                         .gap(px(4.0))
-                        .child(lang_btn("zh", "简体中文", store, accent, divider, text_2))
-                        .child(lang_btn("en", "English", store, accent, divider, text_2)),
-                    theme,
+                        .child(lang_btn("zh", I18nKey::LangZh, store))
+                        .child(lang_btn("en", I18nKey::LangEn, store)),
+                    store,
                 ),
-                // Font Scale Slider
-                setting_row(
-                    "界面缩放",
-                    Some("调整文字与卡片排版缩放 (80% - 140%)"),
+                // 4. Font / UI Scale Slider
+                setting_row_tr(
+                    move || store.tr(I18nKey::FontScale).to_string(),
+                    Some(move || store.tr(I18nKey::FontScaleDesc).to_string()),
                     stepped_slider(
                         0.8,
                         1.4,
                         0.1,
-                        settings.get().font_scale,
-                        theme,
+                        settings.get_untracked().font_scale,
+                        store,
                         move |val| {
                             store.update_settings(|s| s.font_scale = val);
                             store.show_toast(format!("已调整界面缩放: {:.0}%", val * 100.0));
                         },
                     ),
-                    theme,
+                    store,
                 ),
-                // Card Height Mode
-                setting_row(
-                    "卡片高度",
-                    Some("知识项列表卡片默认高度"),
+                // 5. Card Height Mode
+                setting_row_tr(
+                    move || store.tr(I18nKey::CardHeightMode).to_string(),
+                    Some(move || store.tr(I18nKey::CardHeightDesc).to_string()),
                     view()
                         .flex_row()
                         .gap(px(4.0))
                         .child(card_height_btn(
                             CardHeightMode::Compact,
-                            "紧凑 68px",
+                            I18nKey::CardHeightCompact,
                             store,
-                            accent,
-                            divider,
-                            text_2,
                         ))
                         .child(card_height_btn(
                             CardHeightMode::Standard,
-                            "标准 96px",
+                            I18nKey::CardHeightStandard,
                             store,
-                            accent,
-                            divider,
-                            text_2,
                         ))
                         .child(card_height_btn(
                             CardHeightMode::Comfort,
-                            "宽敞 128px",
+                            I18nKey::CardHeightComfort,
                             store,
-                            accent,
-                            divider,
-                            text_2,
                         )),
-                    theme,
+                    store,
                 ),
             ],
         ))
         // ── Group 2: Window & Behavior ──
-        .child(settings_group(
-            "窗口与行为 (Window & Behavior)",
-            theme,
+        .child(settings_group_reactive(
+            move || store.tr(I18nKey::WindowBehaviorGroup).to_string(),
+            store,
             vec![
-                // Window Position Mode
-                setting_row(
-                    "呼出位置",
-                    Some("快捷键唤起主窗口时的对齐基准"),
+                // 6. Window Position Mode
+                setting_row_tr(
+                    move || store.tr(I18nKey::WindowPositionMode).to_string(),
+                    Some(move || store.tr(I18nKey::WindowPosDesc).to_string()),
                     view()
                         .flex_row()
                         .gap(px(4.0))
                         .child(pos_btn(
                             WindowPositionMode::FollowMouse,
-                            "跟随鼠标",
+                            I18nKey::PosFollowMouse,
                             store,
-                            accent,
-                            divider,
-                            text_2,
                         ))
                         .child(pos_btn(
                             WindowPositionMode::Center,
-                            "屏幕居中",
+                            I18nKey::PosCenter,
                             store,
-                            accent,
-                            divider,
-                            text_2,
                         ))
                         .child(pos_btn(
                             WindowPositionMode::Remember,
-                            "记住位置",
+                            I18nKey::PosRemember,
                             store,
-                            accent,
-                            divider,
-                            text_2,
                         )),
-                    theme,
+                    store,
                 ),
-                // Auto hide on blur
-                setting_row(
-                    "失去焦点自动隐藏",
-                    Some("窗口点击外部时自动最小化到托盘"),
-                    render_toggle(settings.get().auto_hide_on_blur, theme, move |next| {
-                        store.update_settings(|s| s.auto_hide_on_blur = next);
-                        store.show_toast(if next {
-                            "已开启失焦自动隐藏"
-                        } else {
-                            "已关闭失焦自动隐藏"
-                        });
-                    }),
-                    theme,
+                // 7. Auto hide on blur
+                setting_row_tr(
+                    move || store.tr(I18nKey::AutoHideOnBlur).to_string(),
+                    Some(move || store.tr(I18nKey::AutoHideDesc).to_string()),
+                    render_store_toggle(
+                        store,
+                        settings.get_untracked().auto_hide_on_blur,
+                        move |next| {
+                            store.update_settings(|s| s.auto_hide_on_blur = next);
+                            store.show_toast(if next {
+                                "已开启失焦自动隐藏"
+                            } else {
+                                "已关闭失焦自动隐藏"
+                            });
+                        },
+                    ),
+                    store,
                 ),
-                // Auto copy sound
-                setting_row(
-                    "复制/操作音效",
-                    Some("当复制知识卡片时播放提示音"),
-                    render_toggle(settings.get().play_sound_on_copy, theme, move |next| {
-                        store.update_settings(|s| s.play_sound_on_copy = next);
-                        store.show_toast(if next {
-                            "已开启操作音效"
-                        } else {
-                            "已关闭操作音效"
-                        });
-                    }),
-                    theme,
+                // 8. Auto copy sound
+                setting_row_tr(
+                    move || store.tr(I18nKey::CopySoundTitle).to_string(),
+                    Some(move || store.tr(I18nKey::CopySoundDesc).to_string()),
+                    render_store_toggle(
+                        store,
+                        settings.get_untracked().play_sound_on_copy,
+                        move |next| {
+                            store.update_settings(|s| s.play_sound_on_copy = next);
+                            store.show_toast(if next {
+                                "已开启操作音效"
+                            } else {
+                                "已关闭操作音效"
+                            });
+                        },
+                    ),
+                    store,
                 ),
             ],
         ))
 }
 
-fn theme_btn(
-    mode: ThemeMode,
-    label: &'static str,
-    store: AppStore,
-    accent: nsh_core::prelude::Rgba,
-    divider: nsh_core::prelude::Rgba,
-    text_color: nsh_core::prelude::Rgba,
-) -> impl IntoElement {
+fn theme_btn(mode: ThemeMode, key: I18nKey, store: AppStore) -> impl IntoElement {
     let settings = store.settings;
     view()
-        .px(px(6.0))
-        .py(px(2.0))
+        .px(px(8.0))
+        .py(px(3.0))
         .rounded(px(4.0))
         .bg(move || {
             if settings.get().theme_mode == mode {
-                accent
+                store.theme().accent
             } else {
-                divider
+                store.theme().divider
             }
         })
         .cursor_pointer()
         .on_press(move || {
             store.update_settings(|s| s.theme_mode = mode);
-            store.show_toast(format!("已切换主题模式: {label}"));
+            store.show_toast(format!("已切换主题模式: {}", key.text()));
         })
         .child(
-            text(label)
+            text(move || store.tr(key))
                 .text_color(move || {
                     if settings.get().theme_mode == mode {
                         rgb(0xffffff)
                     } else {
-                        text_color
+                        store.theme().text_2
                     }
                 })
                 .text_xs(),
@@ -273,140 +229,129 @@ fn theme_btn(
 fn accent_dot(
     hex: Option<&'static str>,
     color_u32: u32,
-    label: &'static str,
+    key: I18nKey,
     store: AppStore,
-    divider: nsh_core::prelude::Rgba,
 ) -> impl IntoElement {
     let settings = store.settings;
     view()
-        .size(px(18.0))
-        .rounded(px(9.0))
+        .size(px(20.0))
+        .rounded(px(10.0))
         .bg(rgb(color_u32))
-        .border(px(2.0))
-        .border_color(move || {
-            let cur = settings.get().accent_color;
-            if cur.as_deref() == hex {
-                rgb(0xffffff)
+        .border(move || {
+            if settings.get().accent_color.as_deref() == hex {
+                px(2.5)
             } else {
-                divider
+                px(1.0)
+            }
+        })
+        .border_color(move || {
+            if settings.get().accent_color.as_deref() == hex {
+                store.theme().text_1
+            } else {
+                store.theme().divider
             }
         })
         .cursor_pointer()
+        .items_center()
+        .justify_center()
         .on_press(move || {
             store.update_settings(|s| s.accent_color = hex.map(str::to_string));
-            store.show_toast(format!("已切换强调色: {label}"));
+            store.show_toast(format!("已切换强调色: {}", key.text()));
         })
+        .child(when(
+            move || settings.get().accent_color.as_deref() == hex,
+            move || view().size(px(6.0)).rounded(px(3.0)).bg(rgb(0xffffff)),
+        ))
 }
 
-fn lang_btn(
-    lang_code: &'static str,
-    label: &'static str,
-    store: AppStore,
-    accent: nsh_core::prelude::Rgba,
-    divider: nsh_core::prelude::Rgba,
-    text_color: nsh_core::prelude::Rgba,
-) -> impl IntoElement {
+fn lang_btn(lang_code: &'static str, key: I18nKey, store: AppStore) -> impl IntoElement {
     let settings = store.settings;
     view()
-        .px(px(6.0))
-        .py(px(2.0))
+        .px(px(8.0))
+        .py(px(3.0))
         .rounded(px(4.0))
         .bg(move || {
             if settings.get().language == lang_code {
-                accent
+                store.theme().accent
             } else {
-                divider
+                store.theme().divider
             }
         })
         .cursor_pointer()
         .on_press(move || {
             store.update_settings(|s| s.language = lang_code.to_string());
-            store.show_toast(format!("已切换语言: {label}"));
+            store.show_toast(format!("已切换语言: {}", key.text()));
         })
         .child(
-            text(label)
+            text(move || store.tr(key))
                 .text_color(move || {
                     if settings.get().language == lang_code {
                         rgb(0xffffff)
                     } else {
-                        text_color
+                        store.theme().text_2
                     }
                 })
                 .text_xs(),
         )
 }
 
-fn card_height_btn(
-    mode: CardHeightMode,
-    label: &'static str,
-    store: AppStore,
-    accent: nsh_core::prelude::Rgba,
-    divider: nsh_core::prelude::Rgba,
-    text_color: nsh_core::prelude::Rgba,
-) -> impl IntoElement {
+fn card_height_btn(mode: CardHeightMode, key: I18nKey, store: AppStore) -> impl IntoElement {
     let settings = store.settings;
     view()
-        .px(px(6.0))
-        .py(px(2.0))
+        .px(px(8.0))
+        .py(px(3.0))
         .rounded(px(4.0))
         .bg(move || {
             if settings.get().card_height_mode == mode {
-                accent
+                store.theme().accent
             } else {
-                divider
+                store.theme().divider
             }
         })
         .cursor_pointer()
         .on_press(move || {
             store.update_settings(|s| s.card_height_mode = mode);
-            store.show_toast(format!("已切换卡片高度: {label}"));
+            store.show_toast(format!("已切换卡片高度: {}", key.text()));
         })
         .child(
-            text(label)
+            text(move || store.tr(key))
                 .text_color(move || {
                     if settings.get().card_height_mode == mode {
                         rgb(0xffffff)
                     } else {
-                        text_color
+                        store.theme().text_2
                     }
                 })
                 .text_xs(),
         )
 }
 
-fn pos_btn(
-    mode: WindowPositionMode,
-    label: &'static str,
-    store: AppStore,
-    accent: nsh_core::prelude::Rgba,
-    divider: nsh_core::prelude::Rgba,
-    text_color: nsh_core::prelude::Rgba,
-) -> impl IntoElement {
+fn pos_btn(mode: WindowPositionMode, key: I18nKey, store: AppStore) -> impl IntoElement {
     let settings = store.settings;
     view()
-        .px(px(6.0))
-        .py(px(2.0))
+        .px(px(8.0))
+        .py(px(3.0))
         .rounded(px(4.0))
         .bg(move || {
             if settings.get().window_position_mode == mode {
-                accent
+                store.theme().accent
             } else {
-                divider
+                store.theme().divider
             }
         })
         .cursor_pointer()
         .on_press(move || {
             store.update_settings(|s| s.window_position_mode = mode);
             crate::platform::monitor::position_window(mode, DEFAULT_WINDOW_W, DEFAULT_WINDOW_H);
-            store.show_toast(format!("已应用窗口位置策略: {label}"));
+            store.show_toast(format!("已应用窗口位置策略: {}", key.text()));
         })
         .child(
-            text(label)
+            text(move || store.tr(key))
                 .text_color(move || {
                     if settings.get().window_position_mode == mode {
                         rgb(0xffffff)
                     } else {
-                        text_color
+                        store.theme().text_2
                     }
                 })
                 .text_xs(),

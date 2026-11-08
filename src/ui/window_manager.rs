@@ -50,6 +50,7 @@ impl Component for AmemoryGuiComponent {
         let store = AppStore::new();
         store.app_config.set(config.clone());
         crate::platform::tray::configure_desktop_menus();
+        crate::platform::window_frame::configure_title_bar(30.0);
 
         // 2. Initial load of knowledge items from runtime
         let initial_items = runtime.load_all_knowledge_items();

@@ -11,14 +11,9 @@ use crate::state::app::{ActiveView, AppStore};
 /// Render top 30px custom titlebar.
 pub fn titlebar_view(
     store: AppStore,
-    theme: ClippiTheme,
+    _theme: ClippiTheme,
     on_trigger_sync: impl Fn() + 'static,
 ) -> impl IntoElement {
-    let titlebar_bg = theme.titlebar_bg;
-    let text_2 = theme.text_2;
-    let accent = theme.accent;
-    let btn_hover = theme.btn_hover;
-
     let is_pinned = store.is_pinned;
     let show_stats = store.show_stats_overview;
     let update_phase = store.update_phase;
@@ -66,12 +61,16 @@ pub fn titlebar_view(
     view()
         .h(px(30.0))
         .w_full()
-        .bg(titlebar_bg)
+        .bg(move || store.theme().titlebar_bg)
         .flex_row()
         .items_center()
         .justify_between()
         .pl(px(10.0))
-        .pr(px(4.0))
+        .pr(move || {
+            let right_sys = nsh_core::element::desktop::title_bar().right.0;
+            let default_right = if cfg!(windows) { 140.0 } else { 4.0 };
+            px(right_sys.max(default_right))
+        })
         // Window drag spacer area on the left (title moved to native window frame)
         .child(view().flex_1().h_full().window_drag(true))
         // Right-side 28x28 action icon buttons
@@ -89,13 +88,22 @@ pub fn titlebar_view(
                         .items_center()
                         .justify_center()
                         .cursor_pointer()
-                        .hover(move |s| s.bg(btn_hover))
+                        .hover(move |s| s.bg(store.theme().btn_hover))
                         .on_press(toggle_stats)
-                        .tooltip(tooltip_box(I18nKey::TitlebarToggleStats.text(), theme))
+                        .tooltip(tooltip_box(
+                            store.tr(I18nKey::TitlebarToggleStats),
+                            store.theme(),
+                        ))
                         .child(
                             text(glyphs::STATS)
                                 .font_family("iconfont")
-                                .text_color(move || if show_stats.get() { accent } else { text_2 })
+                                .text_color(move || {
+                                    if show_stats.get() {
+                                        store.theme().accent
+                                    } else {
+                                        store.theme().text_2
+                                    }
+                                })
                                 .text_sm(),
                         ),
                 )
@@ -107,13 +115,22 @@ pub fn titlebar_view(
                         .items_center()
                         .justify_center()
                         .cursor_pointer()
-                        .hover(move |s| s.bg(btn_hover))
+                        .hover(move |s| s.bg(store.theme().btn_hover))
                         .on_press(on_trigger_sync)
-                        .tooltip(tooltip_box(I18nKey::TitlebarSyncCatalog.text(), theme))
+                        .tooltip(tooltip_box(
+                            store.tr(I18nKey::TitlebarSyncCatalog),
+                            store.theme(),
+                        ))
                         .child(
                             text(glyphs::SYNC)
                                 .font_family("iconfont")
-                                .text_color(move || if is_syncing.get() { accent } else { text_2 })
+                                .text_color(move || {
+                                    if is_syncing.get() {
+                                        store.theme().accent
+                                    } else {
+                                        store.theme().text_2
+                                    }
+                                })
                                 .text_sm(),
                         ),
                 )
@@ -125,17 +142,20 @@ pub fn titlebar_view(
                         .items_center()
                         .justify_center()
                         .cursor_pointer()
-                        .hover(move |s| s.bg(btn_hover))
+                        .hover(move |s| s.bg(store.theme().btn_hover))
                         .on_press(toggle_fav)
-                        .tooltip(tooltip_box(I18nKey::TitlebarFilterFavorite.text(), theme))
+                        .tooltip(tooltip_box(
+                            store.tr(I18nKey::TitlebarFilterFavorite),
+                            store.theme(),
+                        ))
                         .child(
                             text(glyphs::STAR)
                                 .font_family("iconfont")
                                 .text_color(move || {
                                     if filters.with(|f| f.favorites_only) {
-                                        theme.fav_color
+                                        store.theme().fav_color
                                     } else {
-                                        text_2
+                                        store.theme().text_2
                                     }
                                 })
                                 .text_sm(),
@@ -149,13 +169,22 @@ pub fn titlebar_view(
                         .items_center()
                         .justify_center()
                         .cursor_pointer()
-                        .hover(move |s| s.bg(btn_hover))
+                        .hover(move |s| s.bg(store.theme().btn_hover))
                         .on_press(toggle_pin)
-                        .tooltip(tooltip_box(I18nKey::TitlebarAlwaysOnTop.text(), theme))
+                        .tooltip(tooltip_box(
+                            store.tr(I18nKey::TitlebarAlwaysOnTop),
+                            store.theme(),
+                        ))
                         .child(
                             text(glyphs::PIN)
                                 .font_family("iconfont")
-                                .text_color(move || if is_pinned.get() { accent } else { text_2 })
+                                .text_color(move || {
+                                    if is_pinned.get() {
+                                        store.theme().accent
+                                    } else {
+                                        store.theme().text_2
+                                    }
+                                })
                                 .text_sm(),
                         ),
                 )
@@ -167,16 +196,19 @@ pub fn titlebar_view(
                         .items_center()
                         .justify_center()
                         .cursor_pointer()
-                        .hover(move |s| s.bg(btn_hover))
+                        .hover(move |s| s.bg(store.theme().btn_hover))
                         .on_press(open_settings)
-                        .tooltip(tooltip_box(I18nKey::TitlebarSettings.text(), theme))
+                        .tooltip(tooltip_box(
+                            store.tr(I18nKey::TitlebarSettings),
+                            store.theme(),
+                        ))
                         .child(
                             view()
                                 .relative()
                                 .child(
                                     text(glyphs::SETTINGS)
                                         .font_family("iconfont")
-                                        .text_color(text_2)
+                                        .text_color(move || store.theme().text_2)
                                         .text_sm(),
                                 )
                                 .child(when(
@@ -196,7 +228,7 @@ pub fn titlebar_view(
                                             .right(px(-1.0))
                                             .size(px(6.0))
                                             .rounded(px(3.0))
-                                            .bg(accent)
+                                            .bg(move || store.theme().accent)
                                     },
                                 )),
                         ),

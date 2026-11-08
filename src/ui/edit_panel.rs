@@ -120,7 +120,12 @@ pub fn edit_panel_view(
                 .flex_row()
                 .items_center()
                 .justify_between()
-                .px(px(10.0))
+                .pl(px(10.0))
+                .pr(move || {
+                    let right_sys = nsh_core::element::desktop::title_bar().right.0;
+                    let default_right = if cfg!(windows) { 140.0 } else { 10.0 };
+                    px(right_sys.max(default_right))
+                })
                 .border_b(px(1.0))
                 .border_color(divider)
                 .child(

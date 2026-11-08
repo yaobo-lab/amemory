@@ -1,4 +1,4 @@
-//! Knowledge and memory card replicating Clippi's clipboard card 1:1.
+//! Reusable single knowledge card item matching Clippi 1:1.
 
 use nsh_core::MouseEvent;
 use nsh_core::prelude::*;
@@ -10,21 +10,21 @@ use crate::core::search::highlight_text;
 use crate::core::types::{ItemKind, KnowledgeItem};
 use crate::state::app::AppStore;
 
-/// Render single knowledge/memory item card with reactive selection and favorite state.
-#[allow(clippy::needless_pass_by_value, clippy::too_many_arguments)]
+/// Render single knowledge card in virtualized list.
+#[allow(clippy::too_many_arguments)]
 pub fn knowledge_card_view(
     store: AppStore,
     item_sig: ReadSignal<KnowledgeItem>,
     is_selected: impl Fn() -> bool + Copy + 'static,
     search_query: Signal<String>,
-    theme: ClippiTheme,
+    _theme: ClippiTheme,
     on_select: impl Fn() + 'static,
-    on_copy: impl Fn() + Send + Sync + 'static,
-    on_tag: impl Fn() + Send + Sync + 'static,
-    on_more: impl Fn() + Send + Sync + 'static,
-    on_edit: impl Fn() + Send + Sync + 'static,
-    on_fav: impl Fn() + Send + Sync + 'static,
-    on_delete: impl Fn() + Send + Sync + 'static,
+    on_copy: impl Fn() + 'static,
+    on_tag: impl Fn() + 'static,
+    on_more: impl Fn() + 'static,
+    on_edit: impl Fn() + 'static,
+    on_fav: impl Fn() + 'static,
+    on_delete: impl Fn() + 'static,
 ) -> impl IntoElement {
     let on_copy = std::sync::Arc::new(on_copy);
     let on_tag = std::sync::Arc::new(on_tag);
@@ -34,17 +34,6 @@ pub fn knowledge_card_view(
     let on_delete = std::sync::Arc::new(on_delete);
 
     let item = item_sig.get();
-
-    let surface = theme.surface;
-    let divider = theme.divider;
-    let text_1 = theme.text_1;
-    let text_2 = theme.text_2;
-    let text_3 = theme.text_3;
-    let accent = theme.accent;
-    let fav_color = theme.fav_color;
-    let tag_bg = theme.tag_bg;
-    let tag_text = theme.tag_text;
-
     let is_hovered = signal(false);
 
     let (icon, kind_name) = match item.kind {
@@ -63,9 +52,15 @@ pub fn knowledge_card_view(
         .h(move || px(store.card_height()))
         .w_full()
         .rounded(px(10.0))
-        .bg(surface)
+        .bg(move || store.theme().surface)
         .border(px(1.0))
-        .border_color(move || if is_selected() { accent } else { divider })
+        .border_color(move || {
+            if is_selected() {
+                store.theme().accent
+            } else {
+                store.theme().divider
+            }
+        })
         .cursor_pointer()
         .flex_row()
         .overflow_hidden()
@@ -75,9 +70,9 @@ pub fn knowledge_card_view(
         // Left favorite indicator stripe (3px)
         .child(view().w(px(3.0)).h_full().bg(move || {
             if item_sig.get().favorite {
-                fav_color
+                store.theme().fav_color
             } else {
-                divider
+                store.theme().divider
             }
         }))
         // Left type column (36px)
@@ -91,10 +86,20 @@ pub fn knowledge_card_view(
                 .child(
                     text(icon)
                         .font_family("iconfont")
-                        .text_color(move || if is_selected() { accent } else { text_2 })
+                        .text_color(move || {
+                            if is_selected() {
+                                store.theme().accent
+                            } else {
+                                store.theme().text_2
+                            }
+                        })
                         .text_sm(),
                 )
-                .child(text(kind_name).text_color(text_3).text_xs()),
+                .child(
+                    text(kind_name)
+                        .text_color(move || store.theme().text_3)
+                        .text_xs(),
+                ),
         )
         // Right content column
         .child(
@@ -119,7 +124,7 @@ pub fn knowledge_card_view(
                                     cur.title
                                 }
                             })
-                            .text_color(text_1)
+                            .text_color(move || store.theme().text_1)
                             .font_weight(FontWeight::BOLD)
                             .text_xs(),
                         )
@@ -127,7 +132,11 @@ pub fn knowledge_card_view(
                             move || item_sig.get().score.is_some(),
                             move || {
                                 let s = item_sig.get().score.unwrap_or(0.0);
-                                view().child(text(format!("{s:.2}")).text_color(accent).text_xs())
+                                view().child(
+                                    text(format!("{s:.2}"))
+                                        .text_color(move || store.theme().accent)
+                                        .text_xs(),
+                                )
                             },
                         )),
                 )
@@ -139,9 +148,16 @@ pub fn knowledge_card_view(
                         .h(px(32.0))
                         .overflow_hidden()
                         .children(snippet_spans.into_iter().map(move |span| {
+                            let is_hl = span.is_highlight;
                             text(span.text)
-                                .text_color(if span.is_highlight { accent } else { text_2 })
-                                .font_weight(if span.is_highlight {
+                                .text_color(move || {
+                                    if is_hl {
+                                        store.theme().accent
+                                    } else {
+                                        store.theme().text_2
+                                    }
+                                })
+                                .font_weight(if is_hl {
                                     FontWeight::BOLD
                                 } else {
                                     FontWeight::NORMAL
@@ -161,7 +177,7 @@ pub fn knowledge_card_view(
                                 .px(px(4.0))
                                 .py(px(1.0))
                                 .rounded(px(3.0))
-                                .bg(tag_bg)
+                                .bg(move || store.theme().tag_bg)
                                 .child(
                                     text(move || {
                                         let o = item_sig.get().owner;
@@ -171,7 +187,7 @@ pub fn knowledge_card_view(
                                             o
                                         }
                                     })
-                                    .text_color(tag_text)
+                                    .text_color(move || store.theme().tag_text)
                                     .text_xs(),
                                 ),
                         )
@@ -180,10 +196,10 @@ pub fn knowledge_card_view(
                                 .px(px(4.0))
                                 .py(px(1.0))
                                 .rounded(px(3.0))
-                                .bg(tag_bg)
+                                .bg(move || store.theme().tag_bg)
                                 .child(
                                     text(format!("#{}/{}", item.part_index, item.part_total))
-                                        .text_color(text_3)
+                                        .text_color(move || store.theme().text_3)
                                         .text_xs(),
                                 )
                         } else {
@@ -204,7 +220,7 @@ pub fn knowledge_card_view(
                                         .px(px(4.0))
                                         .py(px(1.0))
                                         .rounded(px(3.0))
-                                        .bg(tag_bg)
+                                        .bg(move || store.theme().tag_bg)
                                         .cursor_pointer()
                                         .on_press(move || {
                                             store.filters.update(|f| {
@@ -214,7 +230,9 @@ pub fn knowledge_card_view(
                                             });
                                         })
                                         .child(
-                                            text(format!("#{t_str}")).text_color(accent).text_xs(),
+                                            text(format!("#{t_str}"))
+                                                .text_color(move || store.theme().accent)
+                                                .text_xs(),
                                         )
                                 }),
                         ),
@@ -232,7 +250,7 @@ pub fn knowledge_card_view(
                 let c_del = on_delete.clone();
                 hover_toolbar_view(
                     move || item_sig.get().favorite,
-                    theme,
+                    store.theme(),
                     move || c_copy(),
                     move || c_tag(),
                     move || c_more(),

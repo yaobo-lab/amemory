@@ -33,22 +33,21 @@ pub fn position_window(mode: WindowPositionMode, width: f32, height: f32) {
     });
 
     #[cfg(windows)]
-    unsafe {
-        use windows_sys::Win32::UI::WindowsAndMessaging::{
-            FindWindowW, SetWindowPos, SWP_NOZORDER,
-        };
-        let title: Vec<u16> = "amemory\0".encode_utf16().collect();
-        let hwnd = FindWindowW(std::ptr::null(), title.as_ptr());
+    {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{SWP_NOZORDER, SetWindowPos};
+        let hwnd = crate::platform::window_frame::get_app_hwnd();
         if hwnd != 0 {
-            SetWindowPos(
-                hwnd,
-                0,
-                x as i32,
-                y as i32,
-                width as i32,
-                height as i32,
-                SWP_NOZORDER,
-            );
+            unsafe {
+                SetWindowPos(
+                    hwnd,
+                    0,
+                    x as i32,
+                    y as i32,
+                    width as i32,
+                    height as i32,
+                    SWP_NOZORDER,
+                );
+            }
         }
     }
 }
