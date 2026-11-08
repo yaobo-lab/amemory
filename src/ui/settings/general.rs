@@ -279,8 +279,13 @@ fn lang_btn(lang_code: &'static str, key: I18nKey, store: AppStore) -> impl Into
         })
         .cursor_pointer()
         .on_press(move || {
-            store.update_settings(|s| s.language = lang_code.to_string());
-            store.show_toast(format!("已切换语言: {}", key.text()));
+            store.set_language(lang_code);
+            let msg = if lang_code.starts_with("en") {
+                format!("Language switched to: {}", key.text())
+            } else {
+                format!("已切换语言: {}", key.text())
+            };
+            store.show_toast(msg);
         })
         .child(
             text(move || store.tr(key))

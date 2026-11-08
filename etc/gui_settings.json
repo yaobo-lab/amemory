@@ -15,7 +15,7 @@
   "play_sound_on_copy": true,
   "paste_on_select": true,
   "global_summon_hotkey": "Alt+Space",
-  "show_stats_overview": true,
+  "show_stats_overview": false,
   "auto_watch_catalog": true,
   "favorite_ids": [],
   "custom_tags": {},
@@ -28,8 +28,8 @@
     "script",
     "note"
   ],
-  "window_width": 525.0,
-  "window_height": 525.0,
+  "window_width": 680.0,
+  "window_height": 635.0,
   "last_pos_x": null,
   "last_pos_y": null
 }

@@ -166,15 +166,25 @@ impl AppStore {
         self.items.set(items);
     }
 
+    /// Switch interface language immediately and persist settings.
+    pub fn set_language(&self, lang: &str) {
+        crate::core::i18n::set_language(lang);
+        self.update_settings(|s| {
+            s.language = lang.to_string();
+        });
+    }
+
     /// Update GUI settings and persist to `etc/gui_settings.json`.
     pub fn update_settings(&self, f: impl FnOnce(&mut GuiSettings)) {
         let mut snapshot = None;
         self.settings.update(|s| {
             f(s);
+            crate::core::i18n::set_language(&s.language);
             snapshot = Some(s.clone());
         });
         if let Some(s) = snapshot {
             crate::core::i18n::set_language(&s.language);
+            crate::platform::tray::configure_desktop_menus();
             let _ = s.save();
         }
     }

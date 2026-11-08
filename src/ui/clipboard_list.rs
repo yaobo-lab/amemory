@@ -217,13 +217,13 @@ pub fn clipboard_list_view(
                             .text_2xl(),
                     )
                     .child(
-                        text(I18nKey::CardEmptyTitle.text())
+                        text(move || store.tr(I18nKey::CardEmptyTitle))
                             .text_color(text_2)
                             .font_weight(FontWeight::BOLD)
                             .text_xs(),
                     )
                     .child(
-                        text(I18nKey::CardEmptyDesc.text())
+                        text(move || store.tr(I18nKey::CardEmptyDesc))
                             .text_color(text_3)
                             .text_xs(),
                     )

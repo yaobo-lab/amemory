@@ -474,4 +474,43 @@ mod tests {
                 .starts_with("book://distributed-consensus/")
         );
     }
+
+    #[test]
+    fn test_window_dimensions() {
+        use crate::core::settings::GuiSettings;
+        use crate::platform::window_frame::{
+            DEFAULT_WINDOW_H, DEFAULT_WINDOW_HEIGHT, DEFAULT_WINDOW_W, DEFAULT_WINDOW_WIDTH,
+        };
+
+        assert_eq!(DEFAULT_WINDOW_W, DEFAULT_WINDOW_WIDTH);
+        assert_eq!(DEFAULT_WINDOW_H, DEFAULT_WINDOW_HEIGHT);
+
+        let def = GuiSettings::default();
+        assert_eq!(def.window_width, DEFAULT_WINDOW_WIDTH);
+        assert_eq!(def.window_height, DEFAULT_WINDOW_HEIGHT);
+
+        let loaded = GuiSettings::load();
+        assert_eq!(loaded.window_width, DEFAULT_WINDOW_WIDTH);
+        assert_eq!(loaded.window_height, DEFAULT_WINDOW_HEIGHT);
+    }
+
+    #[test]
+    fn test_immediate_language_switch() {
+        use crate::core::i18n::{is_en, set_language};
+        use crate::core::i18n_keys::I18nKey;
+
+        set_language("zh");
+        assert!(!is_en());
+        assert_eq!(I18nKey::Language.text(), "界面语言");
+        assert_eq!(I18nKey::ThemeMode.text(), "主题模式");
+
+        set_language("en");
+        assert!(is_en());
+        assert_eq!(I18nKey::Language.text(), "Language");
+        assert_eq!(I18nKey::ThemeMode.text(), "Theme Mode");
+
+        set_language("zh");
+        assert!(!is_en());
+        assert_eq!(I18nKey::Language.text(), "界面语言");
+    }
 }

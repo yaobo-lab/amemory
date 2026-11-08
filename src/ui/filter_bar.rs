@@ -31,37 +31,25 @@ pub fn filter_bar_view(
     let show_type_config = store.show_type_config;
 
     let kinds = [
-        (None, I18nKey::FilterAll.text(), glyphs::ALL),
-        (
-            Some(ItemKind::Skill),
-            I18nKey::FilterSkill.text(),
-            glyphs::SKILL,
-        ),
-        (
-            Some(ItemKind::Book),
-            I18nKey::FilterBook.text(),
-            glyphs::BOOK,
-        ),
+        (None, I18nKey::FilterAll, glyphs::ALL),
+        (Some(ItemKind::Skill), I18nKey::FilterSkill, glyphs::SKILL),
+        (Some(ItemKind::Book), I18nKey::FilterBook, glyphs::BOOK),
         (
             Some(ItemKind::Document),
-            I18nKey::FilterDocument.text(),
+            I18nKey::FilterDocument,
             glyphs::DOCUMENT,
         ),
         (
             Some(ItemKind::Memory),
-            I18nKey::FilterMemory.text(),
+            I18nKey::FilterMemory,
             glyphs::MEMORY,
         ),
         (
             Some(ItemKind::Script),
-            I18nKey::FilterScript.text(),
+            I18nKey::FilterScript,
             glyphs::SCRIPT,
         ),
-        (
-            Some(ItemKind::Note),
-            I18nKey::FilterNote.text(),
-            glyphs::NOTE,
-        ),
+        (Some(ItemKind::Note), I18nKey::FilterNote, glyphs::NOTE),
     ];
 
     let toggle_sidebar = move || {
@@ -96,7 +84,7 @@ pub fn filter_bar_view(
                             view()
                                 .flex_row()
                                 .gap(px(4.0))
-                                .children(kinds.into_iter().map(move |(k, label, icon)| {
+                                .children(kinds.into_iter().map(move |(k, key, icon)| {
                                     when(
                                         move || {
                                             k.is_none_or(|kind_val| {
@@ -140,7 +128,7 @@ pub fn filter_bar_view(
                                                     on_type_changed(next_k);
                                                 })
                                                 .tooltip(tooltip_box(
-                                                    format!("按「{label}」分类筛选"),
+                                                    format!("按「{}」分类筛选", key.text()),
                                                     theme,
                                                 ))
                                                 .child(
@@ -156,7 +144,7 @@ pub fn filter_bar_view(
                                                         .text_xs(),
                                                 )
                                                 .child(
-                                                    text(label)
+                                                    text(move || store.tr(key))
                                                         .text_color(move || {
                                                             if filters.get().kind == k {
                                                                 accent

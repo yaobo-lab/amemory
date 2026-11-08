@@ -8,7 +8,6 @@ use nsh_platform_windows::{AppOptions, AppSource, Root, run_app};
 use super::root::root_view;
 use crate::config::AppConfig;
 use crate::core::types::KnowledgeItem;
-use crate::platform::window_frame::{DEFAULT_WINDOW_H, DEFAULT_WINDOW_W};
 use crate::services::amemory_runtime::AmemoryRuntime;
 use crate::state::app::AppStore;
 
@@ -51,6 +50,11 @@ impl Component for AmemoryGuiComponent {
         store.app_config.set(config.clone());
         crate::platform::tray::configure_desktop_menus();
         crate::platform::window_frame::configure_title_bar(30.0);
+        crate::platform::monitor::position_window(
+            store.settings.get().window_position_mode,
+            crate::platform::window_frame::DEFAULT_WINDOW_W,
+            crate::platform::window_frame::DEFAULT_WINDOW_H,
+        );
 
         // 2. Initial load of knowledge items from runtime
         let initial_items = runtime.load_all_knowledge_items();
@@ -297,7 +301,10 @@ pub fn run_gui(runtime: Arc<AmemoryRuntime>, config: AppConfig) {
     let options = AppOptions {
         app_id: "com.amemory.app".to_string(),
         title: crate::core::i18n_keys::I18nKey::AppName.text().to_string(),
-        size: (DEFAULT_WINDOW_W as i32, DEFAULT_WINDOW_H as i32),
+        size: (
+            crate::platform::window_frame::DEFAULT_WINDOW_W as i32,
+            crate::platform::window_frame::DEFAULT_WINDOW_H as i32,
+        ),
         ..AppOptions::default()
     };
 

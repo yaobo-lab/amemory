@@ -169,8 +169,8 @@ impl Default for GuiSettings {
             custom_tags: BTreeMap::new(),
             user_tags: Vec::new(),
             visible_kinds: default_visible_kinds(),
-            window_width: 525.0,
-            window_height: 525.0,
+            window_width: crate::platform::window_frame::DEFAULT_WINDOW_WIDTH,
+            window_height: crate::platform::window_frame::DEFAULT_WINDOW_HEIGHT,
             last_pos_x: None,
             last_pos_y: None,
         }
@@ -184,8 +184,10 @@ impl GuiSettings {
         let path = project_root().join(GUI_SETTINGS_FILE);
         if path.is_file()
             && let Ok(content) = fs::read_to_string(&path)
-            && let Ok(settings) = serde_json::from_str::<Self>(&content)
+            && let Ok(mut settings) = serde_json::from_str::<Self>(&content)
         {
+            settings.window_width = crate::platform::window_frame::DEFAULT_WINDOW_WIDTH;
+            settings.window_height = crate::platform::window_frame::DEFAULT_WINDOW_HEIGHT;
             super::i18n::set_language(&settings.language);
             return settings;
         }
