@@ -1,6 +1,6 @@
-# MCP 与 Amemory + XERJ 的 Agent 使用指南
+# MCP 与 xcat + XERJ 的 Agent 使用指南
 
-本文说明什么是 MCP、当前 `amemory` 项目如何将 **Amemory 的 Skill/Book/Memory 领域能力** 与 **内嵌 XERJ 统一搜索与认知记忆引擎** 合二为一，以及 Agent 如何通过单个统一 MCP 端点调用全部工具。
+本文说明什么是 MCP、当前 `xcat` 项目如何将 **xcat 的 Skill/Book/Memory 领域能力** 与 **内嵌 XERJ 统一搜索与认知记忆引擎** 合二为一，以及 Agent 如何通过单个统一 MCP 端点调用全部工具。
 
 ---
 
@@ -19,7 +19,7 @@ MCP 的核心职责包括：
 
 ## 2. 整体架构（4 Crates + Vendored XERJ Capsule）
 
-`amemory` 采用单仓 Workspace + 内嵌 XERJ 胶囊（`crates/xerj`）架构，完全移除了历史上的 `memvid-core` 与单文件 `.mv2` 存储：
+`xcat` 采用单仓 Workspace + 内嵌 XERJ 胶囊（`crates/xerj`）架构：
 
 ```text
 +------+    +-------------+    +----------+    +------------+
@@ -30,15 +30,15 @@ MCP 的核心职责包括：
                                                       |
                                                       v
                                         +---------------------------+
-                                        |   amemory (Unified MCP)   |
-                                        |  18 Amemory + 20/23 XERJ  |
+                                        |    xcat (Unified MCP)     |
+                                        |   18 xcat + 20/23 XERJ    |
                                         +-------------+-------------+
                                                       |
                           +---------------------------+---------------------------+
                           |                                                       |
                           v                                                       v
             +---------------------------+                           +---------------------------+
-            |   amemory-domain/adapter  |                           |     xerj-mcp Provider     |
+            |      domain / adapter     |                           |     xerj-mcp Provider     |
             |  Skills / Books / Memory  |                           | Search/Graph/AutoIndex/.. |
             +-------------+-------------+                           +-------------+-------------+
                           |                                                       |
@@ -55,10 +55,10 @@ MCP 的核心职责包括：
 
 | Crate 路径 | 包名 | 核心职责 |
 | :--- | :--- | :--- |
-| `.` (`src/`) | `amemory` | 根包二进制入口与装配根（CLI 参数解析、`toolkit-rs` 日志与 panic hook、配置加载校验 `etc/config.toml`、启动目录扫描同步及四种运行模式编排） |
-| `crates/domain` | `amemory-domain` | Skill/Book 规范校验、YAML frontmatter 解析、UTF-8 清洗、稳定分块、PDF/DOCX/PPTX/XLSX 提取 |
-| `crates/adapter` | `amemory-adapter` | `SearchStore` 端口与 `XerjAdapter` 实现，管理 `amemory-skills-v1`、`amemory-books-v1`、`amemory-memory-v1` 三个索引及增量同步账本 |
-| `crates/mcp` | `amemory-mcp` | 统一 MCP 门面，合并 18 个 Amemory 工具与 20/23 个 XERJ 原生工具，启动期零冲突校验 |
+| `.` (`src/`) | `xcat` | 根包二进制入口与装配根（CLI 参数解析、`toolkit-rs` 日志与 panic hook、配置加载校验 `etc/config.toml`、启动目录扫描同步及四种运行模式编排） |
+| `crates/domain` | `domain` | Skill/Book 规范校验、YAML frontmatter 解析、UTF-8 清洗、稳定分块、PDF/DOCX/PPTX/XLSX 提取 |
+| `crates/adapter` | `adapter` | `SearchStore` 端口与 `XerjAdapter` 实现，管理 `amemory-skills-v1`、`amemory-books-v1`、`amemory-memory-v1` 三个索引及增量同步账本 |
+| `crates/mcp` | `xcat-mcp` | 统一 MCP 门面，合并 18 个 xcat 工具与 20/23 个 XERJ 原生工具，启动期零冲突校验 |
 | `crates/xerj` | `xerj-*` | Vendored XERJ 引擎源码胶囊（`v1.0.0-rc.101`），通过 `patches/` 补丁化管理 |
 
 ---
@@ -78,9 +78,9 @@ MCP 的核心职责包括：
 
 ## 4. 统一 MCP 工具清单（38 / 41 个工具）
 
-单个 MCP Server 同时暴露 **18 个 Amemory 领域工具** 与 **20 个 XERJ 原生工具**（配置 `xerj.hub_api_key` 或环境变量 `XERJ_HUB_API_KEY` 后额外暴露 **3 个 Hub 工具**，共 **41 个**）。
+单个 MCP Server 同时暴露 **18 个 xcat 领域工具** 与 **20 个 XERJ 原生工具**（配置 `xerj.hub_api_key` 或环境变量 `XERJ_HUB_API_KEY` 后额外暴露 **3 个 Hub 工具**，共 **41 个**）。
 
-### 4.1 Amemory 领域工具（18 个）
+### 4.1 xcat 领域工具（18 个）
 
 #### 基础与通用记忆（3 个）
 - `ping`：健康检查，返回 `"pong"`。
@@ -130,7 +130,7 @@ MCP 的核心职责包括：
 cargo build --release
 ```
 
-编译产物位于 `target/release/amemory.exe`（Windows）或 `target/release/amemory`（Linux/macOS）。
+编译产物位于 `target/release/xcat.exe`（Windows）或 `target/release/xcat`（Linux/macOS）。
 
 ### 5.2 配置文件 `etc/config.toml`
 
@@ -173,10 +173,10 @@ level = "info"
 
 ```powershell
 # 使用默认 etc/config.toml 启动
-.\target\release\amemory.exe
+.\target\release\xcat.exe
 
 # 或指定自定义配置文件路径
-.\target\release\amemory.exe -c etc/config.toml
+.\target\release\xcat.exe -c etc/config.toml
 ```
 
 ---
@@ -185,9 +185,9 @@ level = "info"
 
 1. **文件即真相源（Source of Truth）**：
    - `./resource/skills` 与 `./resource/books` 目录下的 Markdown 及 `sources/` 原始文档是唯一持久真相源。
-   - `./data/xerj` 是 XERJ 索引与增量同步账本（`.amemory-sync-state.json`）的派生存储目录。
+   - `./data/xerj` 是 XERJ 索引与增量同步账本（`amemory-ledger.json`）的派生存储目录。
 2. **损坏恢复 / 全量重建**：
-   - 当 `./data/xerj` 索引损坏、迁移机器或升级索引 Schema 时，直接删除 `./data/xerj` 目录，然后运行 `server.mode = "sync"`（或直接启动服务），`amemory` 会自动从 `./resource/skills` 和 `./resource/books` 全量重建 `amemory-skills-v1` 与 `amemory-books-v1`。
+   - 当 `./data/xerj` 索引损坏、迁移机器或升级索引 Schema 时，直接删除 `./data/xerj` 目录，然后运行 `server.mode = "sync"`（或直接启动服务），`xcat` 会自动从 `./resource/skills` 和 `./resource/books` 全量重建 `amemory-skills-v1` 与 `amemory-books-v1`。
 3. **认知记忆快照备份**：
    - 通过 `add_chunks` 或 `xerj_memory_store` 写入的数据存储在 `./data/xerj` 中。如需备份运行时记忆，可在停止服务后备份 `./data/xerj` 目录，或使用 `xerj_checkpoint` 创建检查点。
 4. **XERJ 胶囊完整性校验与升级**：
