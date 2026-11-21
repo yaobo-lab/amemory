@@ -1,7 +1,7 @@
 //! Window frame geometry, always-on-top, and frameless window controls.
 
-use nsh_core::desktop::{TitleBarStyle, WindowLevel};
-use nsh_core::element::desktop::{set_level, set_title_bar};
+use nsh_core::desktop::{TitleBarOptions, TitleBarStyle, WindowAttributes, WindowLevel};
+use nsh_core::element::desktop::main_window;
 use nsh_core::geometry::Points;
 
 /// Minimum window width (324px matching Clippi).
@@ -24,17 +24,31 @@ pub const DEFAULT_WINDOW_H: f32 = DEFAULT_WINDOW_HEIGHT;
 
 /// Setup custom title bar style with frameless drag support.
 pub fn configure_title_bar(bar_height_px: f32) {
-    set_title_bar(TitleBarStyle::Hidden, Some(Points(bar_height_px)));
+    let mut title_bar = TitleBarOptions::default();
+    title_bar.style = TitleBarStyle::Hidden;
+    title_bar.height = Some(Points(bar_height_px));
+
+    let mut attributes = WindowAttributes::default();
+    attributes.title_bar = Some(title_bar);
+    main_window().set(attributes);
+}
+
+/// Set the main window's level (floating above normal windows or normal).
+fn set_level(level: WindowLevel) {
+    let mut attributes = WindowAttributes::default();
+    attributes.level = Some(level);
+    main_window().set(attributes);
 }
 
 /// Helper to obtain the native HWND for the application's main window on Windows.
 #[cfg(target_os = "windows")]
 #[must_use]
-pub fn get_app_hwnd() -> isize {
-    use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM};
+pub fn get_app_hwnd() -> *mut std::ffi::c_void {
+    use windows_sys::Win32::Foundation::{HWND, LPARAM};
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         EnumWindows, FindWindowW, GetWindowThreadProcessId, IsWindowVisible,
     };
+    use windows_sys::core::BOOL;
 
     unsafe extern "system" fn enum_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
         let cur_pid = std::process::id();
@@ -51,11 +65,11 @@ pub fn get_app_hwnd() -> isize {
         }
     }
 
-    let mut found_hwnd: HWND = 0;
+    let mut found_hwnd: HWND = std::ptr::null_mut();
     unsafe {
         EnumWindows(Some(enum_proc), &raw mut found_hwnd as LPARAM);
     }
-    if found_hwnd != 0 {
+    if !found_hwnd.is_null() {
         return found_hwnd;
     }
 
@@ -68,12 +82,12 @@ pub fn get_app_hwnd() -> isize {
     ] {
         let title_w: Vec<u16> = title_str.encode_utf16().chain(Some(0)).collect();
         let hwnd = unsafe { FindWindowW(std::ptr::null(), title_w.as_ptr()) };
-        if hwnd != 0 {
+        if !hwnd.is_null() {
             return hwnd;
         }
     }
 
-    0
+    std::ptr::null_mut()
 }
 
 /// Set window always-on-top state.
@@ -90,7 +104,7 @@ pub fn set_always_on_top(pinned: bool) {
             HWND_NOTOPMOST, HWND_TOPMOST, SWP_NOMOVE, SWP_NOSIZE, SetWindowPos,
         };
         let hwnd = get_app_hwnd();
-        if hwnd != 0 {
+        if !hwnd.is_null() {
             let insert_after = if pinned { HWND_TOPMOST } else { HWND_NOTOPMOST };
             unsafe {
                 SetWindowPos(hwnd, insert_after, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
@@ -105,7 +119,7 @@ pub fn hide_app_window() {
     {
         use windows_sys::Win32::UI::WindowsAndMessaging::{SW_MINIMIZE, ShowWindow};
         let hwnd = get_app_hwnd();
-        if hwnd != 0 {
+        if !hwnd.is_null() {
             unsafe {
                 ShowWindow(hwnd, SW_MINIMIZE);
             }

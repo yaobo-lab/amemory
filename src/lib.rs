@@ -476,6 +476,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::float_cmp,
+        reason = "constants and defaults are assigned verbatim, exact equality is intended"
+    )]
     fn test_window_dimensions() {
         use crate::core::settings::GuiSettings;
         use crate::platform::window_frame::{

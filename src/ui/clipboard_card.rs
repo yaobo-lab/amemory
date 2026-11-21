@@ -1,14 +1,22 @@
 //! Reusable single knowledge card item matching Clippi 1:1.
 
 use nsh_core::MouseEvent;
+use nsh_core::element::ImageSrc;
 use nsh_core::prelude::*;
 
-use super::assets::glyphs;
+use super::assets::kind_icons;
 use super::hover_toolbar::hover_toolbar_view;
 use super::theme::ClippiTheme;
 use crate::core::search::highlight_text;
-use crate::core::types::{ItemKind, KnowledgeItem};
+use crate::core::types::KnowledgeItem;
 use crate::state::app::AppStore;
+
+/// Width of the left column holding the kind icon tile and label.
+const KIND_COLUMN_WIDTH: f32 = 56.0;
+/// Side of the tinted rounded tile behind the kind icon.
+const KIND_TILE_SIZE: f32 = 32.0;
+/// Side of the kind icon inside its tile.
+const KIND_ICON_SIZE: f32 = 18.0;
 
 /// Render single knowledge card in virtualized list.
 #[allow(clippy::too_many_arguments)]
@@ -36,14 +44,9 @@ pub fn knowledge_card_view(
     let item = item_sig.get();
     let is_hovered = signal(false);
 
-    let (icon, kind_name) = match item.kind {
-        ItemKind::Skill => (glyphs::SKILL, "SKILL"),
-        ItemKind::Book => (glyphs::BOOK, "BOOK"),
-        ItemKind::Document => (glyphs::DOCUMENT, "DOC"),
-        ItemKind::Memory => (glyphs::MEMORY, "MEM"),
-        ItemKind::Script => (glyphs::SCRIPT, "CODE"),
-        ItemKind::Note => (glyphs::NOTE, "NOTE"),
-    };
+    let kind = item.kind;
+    let hue = kind_icons::hue(kind);
+    let icon_src = ImageSrc::svg_markup(kind_icons::markup(kind));
 
     let query = search_query.get();
     let snippet_spans = highlight_text(&item.preview, &query);
@@ -75,30 +78,43 @@ pub fn knowledge_card_view(
                 store.theme().divider
             }
         }))
-        // Left type column (36px)
+        // Left type column: tinted rounded icon tile + small kind label
         .child(
             view()
-                .w(px(36.0))
+                .w(px(KIND_COLUMN_WIDTH))
                 .h_full()
+                .flex_shrink_0()
                 .items_center()
                 .justify_center()
-                .gap(px(2.0))
+                .gap(px(4.0))
                 .child(
-                    text(icon)
-                        .font_family("iconfont")
-                        .text_color(move || {
-                            if is_selected() {
-                                store.theme().accent
-                            } else {
-                                store.theme().text_2
-                            }
+                    view()
+                        .size(px(KIND_TILE_SIZE))
+                        .rounded(px(9.0))
+                        .border(px(1.0))
+                        .border_color(move || {
+                            let alpha = if is_selected() { 0x66 } else { 0x2e };
+                            rgba((hue << 8) | alpha)
                         })
-                        .text_sm(),
+                        .items_center()
+                        .justify_center()
+                        .bg(move || {
+                            let alpha = if is_selected() { 0x38 } else { 0x1a };
+                            rgba((hue << 8) | alpha)
+                        })
+                        .child(svg(icon_src).size(px(KIND_ICON_SIZE)).text_color(rgb(hue))),
                 )
                 .child(
-                    text(kind_name)
-                        .text_color(move || store.theme().text_3)
-                        .text_xs(),
+                    text(kind_icons::label(kind))
+                        .text_size(px(10.0))
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(move || {
+                            if is_selected() {
+                                rgb(hue)
+                            } else {
+                                store.theme().text_3
+                            }
+                        }),
                 ),
         )
         // Right content column
@@ -107,7 +123,8 @@ pub fn knowledge_card_view(
                 .flex_1()
                 .h_full()
                 .py(px(6.0))
-                .pr(px(8.0))
+                .pl(px(4.0))
+                .pr(px(10.0))
                 .justify_between()
                 // Top row: Title + score
                 .child(

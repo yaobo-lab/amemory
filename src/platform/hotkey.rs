@@ -42,9 +42,9 @@ pub fn register_global_hotkey(on_press: impl FnMut() + Send + 'static) {
                 let (mut mods, mut vk) = parse_hotkey(&initial_def);
 
                 unsafe {
-                    let _ = RegisterHotKey(0, 1001, mods, vk);
+                    let _ = RegisterHotKey(std::ptr::null_mut(), 1001, mods, vk);
                     let mut msg: MSG = std::mem::zeroed();
-                    while GetMessageW(&raw mut msg, 0, 0, 0) > 0 {
+                    while GetMessageW(&raw mut msg, std::ptr::null_mut(), 0, 0) > 0 {
                         if msg.message == WM_HOTKEY {
                             summon_app_window();
                             if let Some(cb_mtx) = CALLBACK.get()
@@ -53,14 +53,14 @@ pub fn register_global_hotkey(on_press: impl FnMut() + Send + 'static) {
                                 cb();
                             }
                         } else if msg.message == WM_HOTKEY_RELOAD {
-                            let _ = UnregisterHotKey(0, 1001);
+                            let _ = UnregisterHotKey(std::ptr::null_mut(), 1001);
                             let new_def = current_hotkey_lock()
                                 .lock()
                                 .map_or_else(|_| "Alt+Space".to_string(), |g| g.clone());
                             let (new_mods, new_vk) = parse_hotkey(&new_def);
                             mods = new_mods;
                             vk = new_vk;
-                            let _ = RegisterHotKey(0, 1001, mods, vk);
+                            let _ = RegisterHotKey(std::ptr::null_mut(), 1001, mods, vk);
                         }
                     }
                 }
@@ -110,7 +110,7 @@ pub fn summon_app_window() {
         let title: Vec<u16> = "amemory\0".encode_utf16().collect();
         unsafe {
             let hwnd = FindWindowW(std::ptr::null(), title.as_ptr());
-            if hwnd != 0 {
+            if !hwnd.is_null() {
                 if IsIconic(hwnd) != 0 {
                     ShowWindow(hwnd, SW_RESTORE);
                 } else {

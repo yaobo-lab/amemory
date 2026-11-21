@@ -7,12 +7,12 @@ pub fn configure_desktop_menus() {
     #[cfg(target_os = "macos")]
     {
         use crate::core::i18n_keys::I18nKey;
-        use nsh_core::element::desktop::{MenuItem, order_front, set_application_menu};
+        use nsh_core::element::desktop::{MenuItem, main_window, set_application_menu};
 
         let file_menu = MenuItem::submenu(
             I18nKey::AppName.text(),
             vec![
-                MenuItem::new(I18nKey::TrayShow.text()).on_select(order_front),
+                MenuItem::new(I18nKey::TrayShow.text()).on_select(|| main_window().focus()),
                 MenuItem::separator(),
                 MenuItem::new(I18nKey::TrayQuit.text()).on_select(|| std::process::exit(0)),
             ],
@@ -24,15 +24,13 @@ pub fn configure_desktop_menus() {
     #[cfg(target_os = "windows")]
     {
         nsh_core::element::desktop::set_application_menu(None);
-        nsh_core::element::desktop::set_menu_bar_visibility(
-            nsh_core::desktop::MenuBarMode::AutoHide,
-        );
+        nsh_core::element::desktop::set_menu_bar(nsh_core::desktop::MenuBarMode::AutoHide);
 
         let hwnd = crate::platform::window_frame::get_app_hwnd();
-        if hwnd != 0 {
+        if !hwnd.is_null() {
             use windows_sys::Win32::UI::WindowsAndMessaging::{DrawMenuBar, SetMenu};
             unsafe {
-                SetMenu(hwnd, 0);
+                SetMenu(hwnd, std::ptr::null_mut());
                 let _ = DrawMenuBar(hwnd);
             }
         }

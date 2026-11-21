@@ -69,7 +69,11 @@ pub fn play_copy_sound_name(filename: &str) {
     {
         use windows_sys::Win32::Media::Audio::{PlaySoundW, SND_ASYNC, SND_MEMORY};
         unsafe {
-            let _ = PlaySoundW(data.as_ptr().cast(), 0, SND_MEMORY | SND_ASYNC);
+            let _ = PlaySoundW(
+                data.as_ptr().cast(),
+                std::ptr::null_mut(),
+                SND_MEMORY | SND_ASYNC,
+            );
         }
     }
 

@@ -1,7 +1,7 @@
 //! Multi-monitor workspace detection and window positioning.
 
 use nsh_core::desktop::WindowFrame;
-use nsh_core::element::desktop::set_frame;
+use nsh_core::element::desktop::main_window;
 use nsh_core::geometry::Points;
 
 use crate::core::settings::WindowPositionMode;
@@ -24,7 +24,7 @@ pub fn position_window(mode: WindowPositionMode, width: f32, height: f32) {
         }
     };
 
-    set_frame(WindowFrame {
+    main_window().set_bounds(WindowFrame {
         x: Some(Points(x)),
         y: Some(Points(y)),
         width: Some(Points(width)),
@@ -36,11 +36,11 @@ pub fn position_window(mode: WindowPositionMode, width: f32, height: f32) {
     {
         use windows_sys::Win32::UI::WindowsAndMessaging::{SWP_NOZORDER, SetWindowPos};
         let hwnd = crate::platform::window_frame::get_app_hwnd();
-        if hwnd != 0 {
+        if !hwnd.is_null() {
             unsafe {
                 SetWindowPos(
                     hwnd,
-                    0,
+                    std::ptr::null_mut(),
                     x as i32,
                     y as i32,
                     width as i32,

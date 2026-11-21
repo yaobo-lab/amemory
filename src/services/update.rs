@@ -123,7 +123,7 @@ pub fn open_releases_page(url: &str) {
         let wide_url: Vec<u16> = url.encode_utf16().chain(std::iter::once(0)).collect();
         unsafe {
             ShellExecuteW(
-                0,
+                std::ptr::null_mut(),
                 op.as_ptr(),
                 wide_url.as_ptr(),
                 std::ptr::null(),

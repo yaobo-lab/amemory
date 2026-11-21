@@ -1,8 +1,9 @@
 //! 30px Top Titlebar matching Clippi 1:1.
 
+use nsh_core::element::ImageSrc;
 use nsh_core::prelude::*;
 
-use super::assets::glyphs;
+use super::assets::{action_icons, glyphs};
 use super::components::tooltip_box;
 use super::theme::ClippiTheme;
 use crate::core::i18n_keys::I18nKey;
@@ -15,7 +16,6 @@ pub fn titlebar_view(
     on_trigger_sync: impl Fn() + 'static,
 ) -> impl IntoElement {
     let is_pinned = store.is_pinned;
-    let show_stats = store.show_stats_overview;
     let update_phase = store.update_phase;
     let is_syncing = store.is_syncing;
     let filters = store.filters;
@@ -31,11 +31,13 @@ pub fn titlebar_view(
         });
     };
 
-    let toggle_stats = move || {
-        let next = !show_stats.get_untracked();
-        show_stats.set(next);
-        store.update_settings(|s| s.show_stats_overview = next);
+    let copy_mcp_endpoint = move || {
+        let url = store.mcp_endpoint_url();
+        crate::platform::clipboard::write_text(&url);
+        store.show_toast(format!("已复制 MCP 地址: {url}"));
     };
+
+    let mcp_icon_src = ImageSrc::svg_markup(action_icons::COPY_MCP);
 
     let toggle_fav = move || {
         let mut next = false;
@@ -80,7 +82,7 @@ pub fn titlebar_view(
                 .items_center()
                 .gap(px(2.0))
                 .window_drag(false)
-                // 1. Stats toggle
+                // 1. Copy MCP endpoint address
                 .child(
                     view()
                         .size(px(28.0))
@@ -89,22 +91,16 @@ pub fn titlebar_view(
                         .justify_center()
                         .cursor_pointer()
                         .hover(move |s| s.bg(store.theme().btn_hover))
-                        .on_press(toggle_stats)
+                        .active(|s| s.opacity(0.7))
+                        .on_press(copy_mcp_endpoint)
                         .tooltip(tooltip_box(
-                            store.tr(I18nKey::TitlebarToggleStats),
+                            store.tr(I18nKey::BottomCopyEndpoint),
                             store.theme(),
                         ))
                         .child(
-                            text(glyphs::STATS)
-                                .font_family("iconfont")
-                                .text_color(move || {
-                                    if show_stats.get() {
-                                        store.theme().accent
-                                    } else {
-                                        store.theme().text_2
-                                    }
-                                })
-                                .text_sm(),
+                            svg(mcp_icon_src)
+                                .size(px(15.0))
+                                .text_color(move || store.theme().text_2),
                         ),
                 )
                 // 2. Sync catalog

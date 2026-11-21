@@ -21,7 +21,7 @@ pub fn read_text() -> Option<String> {
     use windows_sys::Win32::System::Memory::{GlobalLock, GlobalUnlock};
 
     unsafe {
-        if OpenClipboard(0) == 0 {
+        if OpenClipboard(std::ptr::null_mut()) == 0 {
             return None;
         }
         if IsClipboardFormatAvailable(CF_UNICODETEXT) == 0 {
@@ -29,11 +29,11 @@ pub fn read_text() -> Option<String> {
             return None;
         }
         let handle = GetClipboardData(CF_UNICODETEXT);
-        if handle == 0 {
+        if handle.is_null() {
             let _ = CloseClipboard();
             return None;
         }
-        let ptr = GlobalLock(handle as *mut _) as *const u16;
+        let ptr = GlobalLock(handle).cast::<u16>();
         if ptr.is_null() {
             let _ = CloseClipboard();
             return None;
@@ -44,7 +44,7 @@ pub fn read_text() -> Option<String> {
         }
         let slice = std::slice::from_raw_parts(ptr, len);
         let res = String::from_utf16_lossy(slice);
-        let _ = GlobalUnlock(handle as *mut _);
+        let _ = GlobalUnlock(handle);
         let _ = CloseClipboard();
         Some(res)
     }

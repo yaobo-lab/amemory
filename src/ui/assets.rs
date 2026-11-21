@@ -77,3 +77,62 @@ pub mod glyphs {
     /// Stats chart icon (`.icon-ee-pushline-report-level`)
     pub const STATS: &str = "\u{e638}";
 }
+
+/// Lucide SVG icons (ISC, `assets/icons/kind/LICENSE`) for each item kind.
+///
+/// They stroke with `currentColor`, so the element's text color tints them.
+pub mod kind_icons {
+    use crate::core::types::ItemKind;
+
+    const SKILL: &str = include_str!("../../assets/icons/kind/skill.svg");
+    const BOOK: &str = include_str!("../../assets/icons/kind/book.svg");
+    const DOCUMENT: &str = include_str!("../../assets/icons/kind/document.svg");
+    const MEMORY: &str = include_str!("../../assets/icons/kind/memory.svg");
+    const SCRIPT: &str = include_str!("../../assets/icons/kind/script.svg");
+    const NOTE: &str = include_str!("../../assets/icons/kind/note.svg");
+
+    /// SVG markup of the icon representing `kind`.
+    #[must_use]
+    pub const fn markup(kind: ItemKind) -> &'static str {
+        match kind {
+            ItemKind::Skill => SKILL,
+            ItemKind::Book => BOOK,
+            ItemKind::Document => DOCUMENT,
+            ItemKind::Memory => MEMORY,
+            ItemKind::Script => SCRIPT,
+            ItemKind::Note => NOTE,
+        }
+    }
+
+    /// Signature hue (`0xRRGGBB`) of `kind`, readable on light and dark surfaces.
+    #[must_use]
+    pub const fn hue(kind: ItemKind) -> u32 {
+        match kind {
+            ItemKind::Skill => 0x8b5cf6,
+            ItemKind::Book => 0xf97316,
+            ItemKind::Document => 0x3b82f6,
+            ItemKind::Memory => 0x14b8a6,
+            ItemKind::Script => 0xec4899,
+            ItemKind::Note => 0xf59e0b,
+        }
+    }
+
+    /// Short label shown under the icon.
+    #[must_use]
+    pub const fn label(kind: ItemKind) -> &'static str {
+        match kind {
+            ItemKind::Skill => "Skill",
+            ItemKind::Book => "Book",
+            ItemKind::Document => "Doc",
+            ItemKind::Memory => "Mem",
+            ItemKind::Script => "Code",
+            ItemKind::Note => "Note",
+        }
+    }
+}
+
+/// Lucide SVG icons (ISC) for toolbar actions.
+pub mod action_icons {
+    /// Link icon for copying the MCP endpoint URL.
+    pub const COPY_MCP: &str = include_str!("../../assets/icons/action/copy_mcp.svg");
+}

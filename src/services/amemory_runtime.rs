@@ -47,7 +47,7 @@ pub fn open_path_in_explorer(path: &Path) {
         // SAFETY: `op` and `wide_path` are valid null-terminated UTF-16 buffers.
         unsafe {
             ShellExecuteW(
-                0,
+                std::ptr::null_mut(),
                 op.as_ptr(),
                 wide_path.as_ptr(),
                 std::ptr::null(),

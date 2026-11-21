@@ -2,7 +2,6 @@
 
 use nsh_core::prelude::*;
 
-use super::bottom_bar::bottom_bar_view;
 use super::clipboard_list::clipboard_list_view;
 use super::components::confirm_dialog::confirm_dialog_view;
 use super::components::toast::toast_view;
@@ -45,7 +44,6 @@ pub fn root_view(
     let active_view = store.active_view;
     let toast = store.toast;
     let confirm_dialog = store.confirm_dialog;
-    let show_stats = store.show_stats_overview;
     let show_type_config = store.show_type_config;
     let show_tag_filter = store.show_tag_filter;
     let tag_picking_item = store.tag_picking_item;
@@ -59,7 +57,7 @@ pub fn root_view(
 
     let theme = get_theme();
 
-    let sync_for_title = on_trigger_sync.clone();
+    let sync_for_title = on_trigger_sync;
     let delete_for_list = on_delete_item.clone();
     let delete_for_ctx = on_delete_item;
     let save_for_edit = on_save_item.clone();
@@ -105,13 +103,8 @@ pub fn root_view(
                                         move |_| {},
                                         move |_| {},
                                     ))
-                                    // Stats Overview (when toggled on)
-                                    .child(
-                                        when(
-                                            move || show_stats.get(),
-                                            move || stats_overview_view(store, get_theme()),
-                                        ),
-                                    )
+                                    // Unified Stats Overview Header
+                                    .child(stats_overview_view(store, get_theme()))
                                     // Sidebar + Scrollable Card List
                                     .child(
                                         view()
@@ -163,22 +156,6 @@ pub fn root_view(
                                                 },
                                             )),
                                     )
-                                    // Bottom 26px Status Bar
-                                    .child({
-                                        let sync_bottom = on_trigger_sync.clone();
-                                        bottom_bar_view(
-                                            store,
-                                            cur_theme,
-                                            move || sync_bottom(),
-                                            move || {
-                                                let url = store.mcp_endpoint_url();
-                                                crate::platform::clipboard::write_text(&url);
-                                                store.show_toast(format!(
-                                                    "已复制 MCP 端点地址: {url}"
-                                                ));
-                                            },
-                                        )
-                                    })
                             }
                         },
                     ),

@@ -15,7 +15,7 @@
   "play_sound_on_copy": true,
   "paste_on_select": true,
   "global_summon_hotkey": "Alt+Space",
-  "show_stats_overview": false,
+  "show_stats_overview": true,
   "auto_watch_catalog": true,
   "favorite_ids": [],
   "custom_tags": {},

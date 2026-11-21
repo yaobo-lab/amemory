@@ -50,7 +50,7 @@ pub fn launch_prepared_update(installer_path: &Path) -> Result<(), String> {
 
         let ret = unsafe {
             ShellExecuteW(
-                0,
+                std::ptr::null_mut(),
                 op.as_ptr(),
                 exe.as_ptr(),
                 std::ptr::null(),
