@@ -112,6 +112,9 @@ pub fn edit_panel_view(
     ));
     let is_new_item = signal(is_new);
     let saved_file_snapshot = signal(initial_content.clone());
+    let initial_baseline = current_editor_markdown(editor_session, active_frontmatter)
+        .unwrap_or_else(|| initial_content.clone());
+    let saved_editor_baseline = signal(initial_baseline);
     let is_dirty = signal(false);
     let draft_content = signal(initial_content);
     let draft_files = signal(initial_files);
@@ -168,6 +171,7 @@ pub fn edit_panel_view(
                 }
             });
             saved_file_snapshot.set(current_txt.clone());
+            saved_editor_baseline.set(current_txt.clone());
             is_dirty.set(false);
             draft_content.set(current_txt.clone());
 
@@ -214,7 +218,10 @@ pub fn edit_panel_view(
                 .unwrap_or_default();
             active_file_idx.set(target_idx);
             load_markdown_into_editor(editor_session, active_frontmatter, &next_txt);
+            let next_baseline = current_editor_markdown(editor_session, active_frontmatter)
+                .unwrap_or_else(|| next_txt.clone());
             saved_file_snapshot.set(next_txt.clone());
+            saved_editor_baseline.set(next_baseline);
             is_dirty.set(false);
             draft_content.set(next_txt);
             toolbar_rev.update(|v| *v = v.wrapping_add(1));
@@ -840,7 +847,7 @@ pub fn edit_panel_view(
                             .child(markdown_toolbar(
                                 editor_session,
                                 active_frontmatter,
-                                saved_file_snapshot,
+                                saved_editor_baseline,
                                 is_dirty,
                                 draft_content,
                                 draft_files,
@@ -861,7 +868,7 @@ pub fn edit_panel_view(
                                             sync_editor_to_draft(
                                                 editor_session,
                                                 active_frontmatter,
-                                                saved_file_snapshot,
+                                                saved_editor_baseline,
                                                 is_dirty,
                                                 draft_content,
                                                 draft_files,
@@ -1218,27 +1225,40 @@ fn load_markdown_into_editor(
     });
 }
 
+/// Serialize the current editor document combined with any preserved frontmatter.
+fn current_editor_markdown(
+    editor_session: Signal<EditorSession>,
+    active_frontmatter: Signal<Option<String>>,
+) -> Option<String> {
+    editor_session
+        .with_untracked(serialize_session_markdown)
+        .map(|body| {
+            active_frontmatter.with_untracked(|fm| combine_frontmatter(fm.as_deref(), &body))
+        })
+}
+
 /// Sync the serialized Markdown from `editor_session` into `draft_content` and active sub-file.
 fn sync_editor_to_draft(
     editor_session: Signal<EditorSession>,
     active_frontmatter: Signal<Option<String>>,
-    saved_file_snapshot: Signal<String>,
+    saved_editor_baseline: Signal<String>,
     is_dirty: Signal<bool>,
     draft_content: Signal<String>,
     draft_files: Signal<Vec<SubFileEntry>>,
     active_file_idx: Signal<usize>,
 ) {
-    if let Some(body) = editor_session.with_untracked(serialize_session_markdown) {
-        let full =
-            active_frontmatter.with_untracked(|fm| combine_frontmatter(fm.as_deref(), &body));
-        is_dirty.set(full != saved_file_snapshot.get_untracked());
-        draft_content.set(full.clone());
-        let idx = active_file_idx.get_untracked();
-        draft_files.update(|list| {
-            if let Some(slot) = list.get_mut(idx) {
-                slot.content = full;
-            }
-        });
+    if let Some(full) = current_editor_markdown(editor_session, active_frontmatter) {
+        let dirty = full != saved_editor_baseline.get_untracked();
+        is_dirty.set(dirty);
+        if dirty {
+            draft_content.set(full.clone());
+            let idx = active_file_idx.get_untracked();
+            draft_files.update(|list| {
+                if let Some(slot) = list.get_mut(idx) {
+                    slot.content = full;
+                }
+            });
+        }
     }
 }
 
@@ -1595,10 +1615,15 @@ fn markdown_editor_classes(is_dark: bool) -> RichEditorClasses {
     } else {
         "bg-zinc-100 text-zinc-800 font-mono text-xs rounded-md px-3 py-2 my-1 border border-zinc-200"
     };
+    // NOTE: Do NOT add horizontal padding (`px-*`) to inline marks (`code`).
+    // NSH renders inline span padding by injecting hidden `ATTACHMENT_CHAR` placeholders
+    // on both sides of the span, which shifts `TextLine` offsets relative to `RichEditor`'s
+    // document model and prevents the caret from reaching the end of paragraphs containing
+    // inline code.
     let inline_code_cls = if is_dark {
-        "bg-zinc-800 text-emerald-300 font-mono text-xs px-1 rounded"
+        "bg-zinc-800 text-emerald-300 font-mono text-xs rounded"
     } else {
-        "bg-zinc-100 text-emerald-700 font-mono text-xs px-1 rounded"
+        "bg-zinc-100 text-emerald-700 font-mono text-xs rounded"
     };
     let quote_cls = if is_dark {
         "border-l-2 border-zinc-500 pl-3 py-0.5 text-zinc-300 italic my-1"

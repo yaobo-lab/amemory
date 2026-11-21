@@ -12,15 +12,69 @@ app ──> business ──> hal ──> drivers
 
 依赖包括 `#include`、公开类型、符号调用、回调签名、宏引用和 CMake 链接，不能只看运行时调用方向或文件目录。
 
-| 层             | 职责                                               | 允许依赖                                 | 禁止依赖                                         |
-| -------------- | -------------------------------------------------- | ---------------------------------------- | ------------------------------------------------ |
-| `app`          | 页面、组件、导航、LVGL 对象、UI 状态和 UI 线程调度 | `business`、`pkg`、`resource`、LVGL      | `hal`、`drivers`                                 |
-| `business`     | 用例、业务校验、领域状态、业务事件                 | `hal`、`pkg`                             | `app`、`drivers`、`resource`、LVGL               |
-| `business/dal` | 数据持久化、序列化、查询结果转换                   | business 内部模块、`hal`、`pkg`          | `app`、`drivers`、`resource`、LVGL               |
-| `hal`          | 平台无关的硬件能力接口和类型转换                   | `drivers`、`pkg`                         | `app`、`business`、`resource`、LVGL              |
-| `drivers`      | Linux、芯片、开发板、厂商 SDK 的具体操作           | 当前驱动单元、`pkg`、平台 SDK            | `app`、`business`、`hal`、其他独立驱动单元、LVGL |
-| `pkg`          | 真正通用的基础组件                                 | 当前包、标准库、第三方库、通用底层包     | 产品业务层、硬件层、LVGL                         |
-| `resource`     | 静态图片、字体等编译期资源                         | 资源生成工具；格式需要时可使用 LVGL 声明 | 应用行为和业务逻辑                               |
+层
+
+职责
+
+允许依赖
+
+禁止依赖
+
+`app`
+
+页面、组件、导航、LVGL 对象、UI 状态和 UI 线程调度
+
+`business`、`pkg`、`resource`、LVGL
+
+`hal`、`drivers`
+
+`business`
+
+用例、业务校验、领域状态、业务事件
+
+`hal`、`pkg`
+
+`app`、`drivers`、`resource`、LVGL
+
+`business/dal`
+
+数据持久化、序列化、查询结果转换
+
+business 内部模块、`hal`、`pkg`
+
+`app`、`drivers`、`resource`、LVGL
+
+`hal`
+
+平台无关的硬件能力接口和类型转换
+
+`drivers`、`pkg`
+
+`app`、`business`、`resource`、LVGL
+
+`drivers`
+
+Linux、芯片、开发板、厂商 SDK 的具体操作
+
+当前驱动单元、`pkg`、平台 SDK
+
+`app`、`business`、`hal`、其他独立驱动单元、LVGL
+
+`pkg`
+
+真正通用的基础组件
+
+当前包、标准库、第三方库、通用底层包
+
+产品业务层、硬件层、LVGL
+
+`resource`
+
+静态图片、字体等编译期资源
+
+资源生成工具；格式需要时可使用 LVGL 声明
+
+应用行为和业务逻辑
 
 `src/business/dal` 是 business 的内部模块，不是独立架构层。`src/include` 也不是独立层；定义应回到其所有者目录。
 
