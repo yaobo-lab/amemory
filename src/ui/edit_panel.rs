@@ -114,22 +114,21 @@ pub fn edit_panel_view(
         // ── 1. Top 36px Navigation Header ──
         .child(
             view()
-                .h(px(36.0))
+                .h(px(40.0))
                 .w_full()
                 .bg(card_bg)
                 .flex_row()
                 .items_center()
                 .justify_between()
                 .pl(px(10.0))
-                .pr(move || {
-                    let right_sys = nsh_core::element::desktop::title_bar().right.0;
-                    let default_right = if cfg!(windows) { 140.0 } else { 10.0 };
-                    px(right_sys.max(default_right))
-                })
+                .pr(px(12.0))
                 .border_b(px(1.0))
                 .border_color(divider)
                 .child(
                     view()
+                        .h(px(30.0))
+                        .px(px(8.0))
+                        .rounded(px(6.0))
                         .flex_row()
                         .items_center()
                         .gap(px(6.0))
@@ -142,21 +141,21 @@ pub fn edit_panel_view(
                             text(glyphs::BACK)
                                 .font_family("iconfont")
                                 .text_color(accent)
-                                .text_sm(),
+                                .text_size(px(18.0)),
                         )
                         .child(
                             text(header_title)
                                 .text_color(text_1)
                                 .font_weight(FontWeight::BOLD)
-                                .text_xs(),
+                                .text_sm(),
                         ),
                 )
                 .child(
                     // Save Button
                     view()
-                        .h(px(24.0))
-                        .px(px(12.0))
-                        .rounded(px(5.0))
+                        .h(px(28.0))
+                        .px(px(14.0))
+                        .rounded(px(6.0))
                         .bg(accent)
                         .items_center()
                         .justify_center()

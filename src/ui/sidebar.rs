@@ -43,6 +43,15 @@ pub fn sidebar_view(store: AppStore, theme: ClippiTheme) -> impl IntoElement {
         list
     };
 
+    let mut timing = KeyframeTiming::default();
+    timing.duration_ms = 200.0;
+    timing.easing = Easing::Bezier(0.16, 1.0, 0.3, 1.0);
+    let sidebar_motion = motion().entering(
+        MotionSpec::new(timing)
+            .values(MotionChannel::Opacity, [0.0, 1.0])
+            .values(MotionChannel::TranslateX, [-18.0, 0.0]),
+    );
+
     view()
         .w(px(68.0))
         .h_full()
@@ -52,6 +61,7 @@ pub fn sidebar_view(store: AppStore, theme: ClippiTheme) -> impl IntoElement {
         .p(px(4.0))
         .flex_col()
         .gap(px(4.0))
+        .bind_motion(&sidebar_motion)
         .child(
             view()
                 .h(px(22.0))

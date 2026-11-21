@@ -7,7 +7,7 @@ use super::clipboard_card::knowledge_card_view;
 use super::theme::ClippiTheme;
 use crate::core::filters::{FilterCriteria, SearchMode};
 use crate::core::i18n_keys::I18nKey;
-use crate::core::types::KnowledgeItem;
+use crate::core::types::{ItemKind, KnowledgeItem};
 use crate::state::app::AppStore;
 
 fn compute_query_score(item: &KnowledgeItem, query: &str, mode: SearchMode) -> Option<f32> {
@@ -252,13 +252,12 @@ pub fn clipboard_list_view(
                                 edit_for_select(cur_item);
                             } else {
                                 selected_index_signal.set(Some(idx));
-                                if store.settings.get_untracked().paste_on_select {
+                                let skip_copy_on_click =
+                                    matches!(cur_item.kind, ItemKind::Book | ItemKind::Skill);
+                                if store.settings.get_untracked().paste_on_select
+                                    && !skip_copy_on_click
+                                {
                                     copy_for_select(cur_item);
-                                } else {
-                                    store.show_toast(format!(
-                                        "已选中「{}」，再次点击可打开编辑",
-                                        cur_item.title
-                                    ));
                                 }
                             }
                         };

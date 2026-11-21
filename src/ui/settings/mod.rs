@@ -180,25 +180,27 @@ pub fn settings_panel_view(
         .h_full()
         .flex_col()
         .bg(move || store.theme().panel_bg)
-        // ── 1. Top 36px Title Bar with Back Button ──
+        // ── 1. Top 40px Header Bar with Back Button ──
         .child(
             view()
-                .h(px(36.0))
+                .h(px(40.0))
                 .w_full()
                 .bg(move || store.theme().card_bg)
                 .flex_row()
                 .items_center()
                 .gap(px(8.0))
                 .pl(px(10.0))
-                .pr(move || {
-                    let right_sys = nsh_core::element::desktop::title_bar().right.0;
-                    let default_right = if cfg!(windows) { 140.0 } else { 10.0 };
-                    px(right_sys.max(default_right))
-                })
+                .pr(px(12.0))
                 .border_b(px(1.0))
                 .border_color(move || store.theme().divider)
                 .child(
                     view()
+                        .h(px(30.0))
+                        .px(px(8.0))
+                        .rounded(px(6.0))
+                        .flex_row()
+                        .items_center()
+                        .gap(px(6.0))
                         .cursor_pointer()
                         .on_press(move || {
                             store.active_view.set(ActiveView::ClipboardList);
@@ -208,14 +210,14 @@ pub fn settings_panel_view(
                             text(glyphs::BACK)
                                 .font_family("iconfont")
                                 .text_color(move || store.theme().accent)
+                                .text_size(px(18.0)),
+                        )
+                        .child(
+                            text(move || store.tr(I18nKey::SettingHeaderTitle))
+                                .text_color(move || store.theme().text_1)
+                                .font_weight(FontWeight::BOLD)
                                 .text_sm(),
                         ),
-                )
-                .child(
-                    text(move || store.tr(I18nKey::SettingHeaderTitle))
-                        .text_color(move || store.theme().text_1)
-                        .font_weight(FontWeight::BOLD)
-                        .text_xs(),
                 )
                 .child(view().flex_1().h_full().window_drag(true)),
         )

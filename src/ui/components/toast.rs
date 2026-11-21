@@ -26,6 +26,7 @@ pub fn toast_view(message: impl Into<String>, theme: ClippiTheme) -> impl IntoEl
         .absolute()
         .w_full()
         .h_full()
+        .pointer_events(nsh_core::PointerEvents::None)
         .items_center()
         .justify_center()
         .child(
@@ -38,6 +39,7 @@ pub fn toast_view(message: impl Into<String>, theme: ClippiTheme) -> impl IntoEl
                 .border(px(1.5))
                 .border_color(border_color)
                 .shadow_xl()
+                .pointer_events(nsh_core::PointerEvents::None)
                 .flex_row()
                 .items_center()
                 .justify_center()

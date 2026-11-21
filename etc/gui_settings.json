@@ -4,7 +4,7 @@
   "font_family": null,
   "font_scale": 1.4,
   "language": "zh",
-  "card_height_mode": "compact",
+  "card_height_mode": "standard",
   "window_position_mode": "center",
   "auto_hide_on_blur": false,
   "auto_check_updates": true,
@@ -19,12 +19,16 @@
   "auto_watch_catalog": true,
   "favorite_ids": [],
   "custom_tags": {
+    "skill:baby-name": [
+      "skill:baby-name"
+    ],
     "skill:ccomments": [
       "skill:ccomments"
     ]
   },
   "user_tags": [
-    "skill:ccomments"
+    "skill:ccomments",
+    "skill:baby-name"
   ],
   "visible_kinds": [
     "skill",

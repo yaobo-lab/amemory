@@ -7,7 +7,7 @@ use super::components::confirm_dialog::confirm_dialog_view;
 use super::components::toast::toast_view;
 use super::context_menu::context_menu_modal;
 use super::edit_panel::edit_panel_view;
-use super::filter_bar::filter_bar_view;
+use super::filter_bar::{filter_bar_view, search_mode_dropdown_overlay};
 use super::quick_paste::execute_quick_copy;
 use super::search_box::search_box_view;
 use super::settings::settings_panel_view;
@@ -46,6 +46,7 @@ pub fn root_view(
     let confirm_dialog = store.confirm_dialog;
     let show_type_config = store.show_type_config;
     let show_tag_filter = store.show_tag_filter;
+    let show_search_mode_menu = store.show_search_mode_menu;
     let tag_picking_item = store.tag_picking_item;
     let context_menu_item = store.context_menu_item;
     let is_sidebar_open = store.is_sidebar_open;
@@ -211,6 +212,13 @@ pub fn root_view(
                 ),
         )
         // ── 3. Overlays & Dialogs ──
+        // Search Mode Dropdown Overlay
+        .child(
+            when(
+                move || show_search_mode_menu.get(),
+                move || search_mode_dropdown_overlay(store, get_theme(), move |_| {}),
+            ),
+        )
         // Tag Filter Modal
         .child(
             when(
