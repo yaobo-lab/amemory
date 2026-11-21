@@ -18,8 +18,14 @@
   "show_stats_overview": true,
   "auto_watch_catalog": true,
   "favorite_ids": [],
-  "custom_tags": {},
-  "user_tags": [],
+  "custom_tags": {
+    "skill:ccomments": [
+      "skill:ccomments"
+    ]
+  },
+  "user_tags": [
+    "skill:ccomments"
+  ],
   "visible_kinds": [
     "skill",
     "book",

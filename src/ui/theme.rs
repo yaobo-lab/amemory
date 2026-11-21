@@ -65,6 +65,10 @@ pub struct ClippiTheme {
     pub panel_sep_line: Rgba,
     /// Floating toast background.
     pub toast_bg: Rgba,
+    /// Floating toast foreground text color.
+    pub toast_text: Rgba,
+    /// Floating toast border color.
+    pub toast_border: Rgba,
 }
 
 impl ClippiTheme {
@@ -95,7 +99,9 @@ impl ClippiTheme {
             panel_input_bg: rgb(0x1e1f20),
             input_bg: rgb(0x1e1f20),
             panel_sep_line: rgba(0xffffff0d),
-            toast_bg: rgba(0x3a3b3de8),
+            toast_bg: rgba(0x23785af2),
+            toast_text: rgb(0xffffff),
+            toast_border: rgba(0x7ecba380),
         }
     }
 
@@ -126,7 +132,9 @@ impl ClippiTheme {
             panel_input_bg: rgb(0xf5f6fc),
             input_bg: rgb(0xf5f6fc),
             panel_sep_line: rgba(0x00000010),
-            toast_bg: rgba(0xfffffff0),
+            toast_bg: rgba(0x288462f2),
+            toast_text: rgb(0xffffff),
+            toast_border: rgba(0x1f6b4f66),
         }
     }
 

@@ -122,12 +122,12 @@
   <circle cx="720" cy="570" r="6" class="dot"/>
 
   <!-- Phase 3: AI systems -->
-  <text x="741" y="523" class="label">SILL A/B、Plan</text>
-  <text x="750" y="548" class="label-light">A/B测试、计划审核</text>
-  <text x="786" y="431" class="label">RAG,RAG-WIKi,工作流</text>
-  <text x="797" y="456" class="label-light">分块、召回、重排、检索增强</text>
-  <text x="858" y="350" class="label">评测与可观测性</text>
-  <text x="875" y="375" class="label-light">Guardrails · 安全</text>
+  <text x="741" y="523" class="label">SKILL A/B · Plan</text>
+  <text x="750" y="548" class="label-light">A/B 测试、计划审核</text>
+  <text x="786" y="431" class="label">Agent 与上下文工程</text>
+  <text x="797" y="456" class="label-light">工具调用 · MCP · 记忆 </text>
+  <text x="800" y="350" class="label">RAG · RAG-Wiki · Workflow</text>
+  <text x="800" y="375" class="label-light">分块、召回、重排、检索增强</text>
   <text x="812" y="300" class="phase">开悟之坡</text>
   <circle cx="985" cy="165" r="6" class="dot"/>
   <g transform="translate(910 90)">
@@ -135,12 +135,12 @@
     <text x="61" y="21" text-anchor="middle" class="callout-title">Agent 无所不能？</text>
     <text x="61" y="41" text-anchor="middle" class="callout-body">多智能体峰值</text>
   </g>
-  <text x="1060" y="326" class="label" text-anchor="middle">生产现实</text>
-  <text x="1080" y="349" class="label-light" text-anchor="middle">延迟 · 稳定性</text>
-  <text x="1072" y="369" class="label-light" text-anchor="middle">权限 · 成本</text>
+  <text x="1080" y="326" class="label" text-anchor="middle">生产现实</text>
+  <text x="1090" y="349" class="label-light" text-anchor="middle">评测 · 可观测性</text>
+  <text x="1090" y="369" class="label-light" text-anchor="middle">安全 · 权限 </text>
 
   <!-- Phase 4: value -->
-  <text x="1060" y="172" class="phase">永续之原</text>
+  <text x="1060" y="172" class="phase">大宗师</text>
   <text x="1060" y="465" class="label">数据闭环</text>
   <text x="1060" y="492" class="label">人机协作</text>
   <text x="1060" y="519" class="label">持续迭代</text>

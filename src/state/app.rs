@@ -109,6 +109,8 @@ pub struct AppStore {
     pub show_tag_filter: Signal<bool>,
     /// Whether the category filter type config modal is visible.
     pub show_type_config: Signal<bool>,
+    /// Whether the search retrieval mode dropdown menu is visible.
+    pub show_search_mode_menu: Signal<bool>,
     /// Current item whose tags are being edited in the Tag Picker modal.
     pub tag_picking_item: Signal<Option<KnowledgeItem>>,
     /// Current item whose context action menu is open.
@@ -148,6 +150,7 @@ impl AppStore {
             app_config: signal(loaded_config),
             show_tag_filter: signal(false),
             show_type_config: signal(false),
+            show_search_mode_menu: signal(false),
             tag_picking_item: signal(None),
             context_menu_item: signal(None),
         }
