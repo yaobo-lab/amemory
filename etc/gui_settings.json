@@ -4,7 +4,7 @@
   "font_family": null,
   "font_scale": 1.4,
   "language": "zh",
-  "card_height_mode": "standard",
+  "card_height_mode": "compact",
   "window_position_mode": "center",
   "auto_hide_on_blur": false,
   "auto_check_updates": true,
@@ -24,10 +24,14 @@
     ],
     "skill:ccomments": [
       "skill:ccomments"
+    ],
+    "skill:wirtec": [
+      "skill:wirtec"
     ]
   },
   "user_tags": [
     "skill:ccomments",
+    "skill:wirtec",
     "skill:baby-name"
   ],
   "visible_kinds": [

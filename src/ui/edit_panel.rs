@@ -1,8 +1,23 @@
 //! Edit and create panel for Knowledge items (Skill, Book, Memory, Note)
 //! 1:1 replica of Clippi edit panel layout and controls.
 
+use std::collections::BTreeMap;
+
 use nsh_base::input;
+use nsh_base::rich_editor::{
+    commands::{BoxCommand, command, tiptap},
+    extensions::{
+        history,
+        markdown::{MarkdownOptions, markdown as markdown_plugin},
+        starter,
+    },
+    formats::{DocFormat, MarkdownFormat},
+    model::{Attrs, Fragment},
+    state::{EditorState, EditorStateConfig},
+    view::{EditorSession, NodeViews, RichEditorClasses, rich_editor},
+};
 use nsh_core::prelude::*;
+use serde_json::json;
 use toolkit_rs::chrono::Utc;
 
 use super::assets::glyphs;
@@ -88,6 +103,10 @@ pub fn edit_panel_view(
     } else {
         initial_item.owner.clone()
     });
+    let editor_session = signal(EditorSession::new(
+        build_markdown_state(&initial_content),
+        NodeViews::new(),
+    ));
     let draft_content = signal(initial_content);
     let draft_files = signal(initial_files);
     let active_file_idx = signal(initial_file_idx);
@@ -99,6 +118,7 @@ pub fn edit_panel_view(
     let new_subfile_path = signal(String::new());
     let find_text = signal(String::new());
     let replace_text = signal(String::new());
+    let toolbar_rev = signal(0u64);
 
     let header_title = if is_new {
         I18nKey::EditTitleNew.text()
@@ -162,7 +182,9 @@ pub fn edit_panel_view(
                         .cursor_pointer()
                         .on_press(move || {
                             let mut item = initial_item.clone();
-                            let current_txt = draft_content.get();
+                            let current_txt = editor_session
+                                .with_untracked(serialize_session_markdown)
+                                .unwrap_or_else(|| draft_content.get_untracked());
                             let raw_title = draft_title.get();
                             let cur_kind = draft_kind.get();
 
@@ -422,6 +444,9 @@ pub fn edit_panel_view(
                                         if did_replace {
                                             let idx = active_file_idx.get_untracked();
                                             let latest = draft_content.get_untracked();
+                                            editor_session.with_untracked(|s| {
+                                                s.update_state(build_markdown_state(&latest));
+                                            });
                                             draft_files.update(|list| {
                                                 if let Some(slot) = list.get_mut(idx) {
                                                     slot.content = latest;
@@ -458,6 +483,9 @@ pub fn edit_panel_view(
                                         });
                                         let idx = active_file_idx.get_untracked();
                                         let latest = draft_content.get_untracked();
+                                        editor_session.with_untracked(|s| {
+                                            s.update_state(build_markdown_state(&latest));
+                                        });
                                         draft_files.update(|list| {
                                             if let Some(slot) = list.get_mut(idx) {
                                                 slot.content = latest;
@@ -648,6 +676,9 @@ pub fn edit_panel_view(
                                                             .map(|f| f.content.clone())
                                                             .unwrap_or_default();
                                                         active_file_idx.set(new_idx);
+                                                        editor_session.with_untracked(|s| {
+                                                            s.update_state(build_markdown_state(&next_txt));
+                                                        });
                                                         draft_content.set(next_txt);
                                                         new_subfile_path.set(String::new());
                                                         new_subfile_open.set(false);
@@ -717,6 +748,9 @@ pub fn edit_panel_view(
                                                                 .map(|f| f.content.clone())
                                                                 .unwrap_or_default();
                                                             active_file_idx.set(target_idx);
+                                                            editor_session.with_untracked(|s| {
+                                                                s.update_state(build_markdown_state(&next_txt));
+                                                            });
                                                             draft_content.set(next_txt);
                                                         }
                                                     })
@@ -739,7 +773,7 @@ pub fn edit_panel_view(
                 },
             ),
         )
-        // ── 6. Multiline Content Editor or Live Preview ──
+        // ── 6. NSH Markdown RichEditor or Live Preview ──
         .child(
             view()
                 .flex_1()
@@ -753,33 +787,474 @@ pub fn edit_panel_view(
                         move || rich_preview_view(&draft_content.get(), theme),
                     )
                     .otherwise(move || {
-                        input()
-                            .multiline(true)
-                            .scrollbar(true)
-                            .value(move || draft_content.get())
-                            .on_change(move |v: &str| {
-                                let val = v.to_string();
-                                draft_content.set(val.clone());
-                                let idx = active_file_idx.get_untracked();
-                                draft_files.update(|list| {
-                                    if let Some(slot) = list.get_mut(idx) {
-                                        slot.content = val;
-                                    }
-                                });
-                            })
-                            .placeholder(I18nKey::EditContentPlaceholder.text())
+                        let session_for_view = editor_session.get_untracked();
+                        view()
                             .w_full()
                             .flex_1()
+                            .flex_col()
                             .rounded(px(6.0))
                             .border(px(1.0))
                             .border_color(input_border)
                             .bg(card_bg)
-                            .p(px(8.0))
-                            .text_xs()
-                            .text_color(text_1)
+                            .overflow_hidden()
+                            .child(markdown_toolbar(
+                                editor_session,
+                                draft_content,
+                                draft_files,
+                                active_file_idx,
+                                toolbar_rev,
+                                &theme,
+                            ))
+                            .child(
+                                view().w_full().flex_1().overflow_hidden().child(
+                                    rich_editor()
+                                        .editor(session_for_view)
+                                        .placeholder(I18nKey::EditContentPlaceholder.text())
+                                        .classes(markdown_editor_classes(theme.bg.r < 0.5))
+                                        .w_full()
+                                        .h_full()
+                                        .text_color(text_1)
+                                        .on_change(move |_: &_| {
+                                            sync_editor_to_draft(
+                                                editor_session,
+                                                draft_content,
+                                                draft_files,
+                                                active_file_idx,
+                                            );
+                                            toolbar_rev.update(|v| *v = v.wrapping_add(1));
+                                        })
+                                        .on_selection_change(move |_: &_| {
+                                            toolbar_rev.update(|v| *v = v.wrapping_add(1));
+                                        }),
+                                ),
+                            )
                     }),
                 ),
         )
+}
+
+/// Build an NSH `RichEditor` state initialized with starter + markdown plugins and parsed Markdown.
+fn build_markdown_state(markdown_text: &str) -> EditorState {
+    let schema = starter::schema();
+    let mut plugins = starter::plugins(&schema);
+    plugins.extend(markdown_plugin(MarkdownOptions::default()));
+
+    let mut config = EditorStateConfig::new(schema.clone()).plugins(plugins.clone());
+    if !markdown_text.is_empty()
+        && let Ok(doc) = MarkdownFormat::default().parse(&schema, markdown_text)
+    {
+        config = config.doc(doc);
+    }
+
+    EditorState::create(config).unwrap_or_else(|_| {
+        EditorState::create(EditorStateConfig::new(schema).plugins(plugins))
+            .expect("empty starter markdown editor state is always valid")
+    })
+}
+
+/// Serialize the current `EditorSession` document back to Markdown text.
+fn serialize_session_markdown(session: &EditorSession) -> Option<String> {
+    MarkdownFormat::default()
+        .serialize(session.state().doc())
+        .ok()
+}
+
+/// Sync the serialized Markdown from `editor_session` into `draft_content` and active sub-file.
+fn sync_editor_to_draft(
+    editor_session: Signal<EditorSession>,
+    draft_content: Signal<String>,
+    draft_files: Signal<Vec<SubFileEntry>>,
+    active_file_idx: Signal<usize>,
+) {
+    if let Some(val) = editor_session.with_untracked(serialize_session_markdown) {
+        draft_content.set(val.clone());
+        let idx = active_file_idx.get_untracked();
+        draft_files.update(|list| {
+            if let Some(slot) = list.get_mut(idx) {
+                slot.content = val;
+            }
+        });
+    }
+}
+
+/// Formatting and editing actions exposed by the Markdown editor header toolbar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ToolbarAction {
+    Undo,
+    Redo,
+    Heading(u64),
+    Bold,
+    Italic,
+    Strike,
+    InlineCode,
+    BulletList,
+    OrderedList,
+    TaskList,
+    Blockquote,
+    CodeBlock,
+    HorizontalRule,
+}
+
+impl ToolbarAction {
+    fn build_command(self, session: &EditorSession) -> Option<BoxCommand> {
+        let state = session.state();
+        let schema = state.schema();
+        match self {
+            Self::Undo => Some(command(history::undo)),
+            Self::Redo => Some(command(history::redo)),
+            Self::Heading(level) => {
+                let heading = schema.node_type("heading")?;
+                let paragraph = schema.node_type("paragraph")?;
+                let attrs = Attrs::from_iter([("level".to_owned(), json!(level))]);
+                Some(tiptap::toggle_node(heading, paragraph, attrs))
+            }
+            Self::Bold => {
+                let mark = schema.mark_type("bold")?;
+                Some(tiptap::toggle_mark(mark, Attrs::new(), false))
+            }
+            Self::Italic => {
+                let mark = schema.mark_type("italic")?;
+                Some(tiptap::toggle_mark(mark, Attrs::new(), false))
+            }
+            Self::Strike => {
+                let mark = schema.mark_type("strike")?;
+                Some(tiptap::toggle_mark(mark, Attrs::new(), false))
+            }
+            Self::InlineCode => {
+                let mark = schema.mark_type("code")?;
+                Some(tiptap::toggle_mark(mark, Attrs::new(), false))
+            }
+            Self::BulletList => {
+                let list = schema.node_type("bulletList")?;
+                let item = schema.node_type("listItem")?;
+                Some(tiptap::toggle_list(list, item, false, Attrs::new()))
+            }
+            Self::OrderedList => {
+                let list = schema.node_type("orderedList")?;
+                let item = schema.node_type("listItem")?;
+                Some(tiptap::toggle_list(list, item, false, Attrs::new()))
+            }
+            Self::TaskList => {
+                let list = schema.node_type("taskList")?;
+                let item = schema.node_type("taskItem")?;
+                Some(tiptap::toggle_list(list, item, false, Attrs::new()))
+            }
+            Self::Blockquote => {
+                let quote = schema.node_type("blockquote")?;
+                Some(tiptap::toggle_wrap(quote, Attrs::new()))
+            }
+            Self::CodeBlock => {
+                let code_block = schema.node_type("codeBlock")?;
+                let paragraph = schema.node_type("paragraph")?;
+                Some(tiptap::toggle_node(code_block, paragraph, Attrs::new()))
+            }
+            Self::HorizontalRule => {
+                let hr = schema.node_type("horizontalRule")?;
+                Some(command(move |st, dispatch| {
+                    let Ok(node) = hr.create(None, Fragment::empty(), Vec::new()) else {
+                        return false;
+                    };
+                    if let Some(dispatch) = dispatch {
+                        let mut tr = st.tr();
+                        tr.replace_selection_with(node, false);
+                        dispatch(tr);
+                    }
+                    true
+                }))
+            }
+        }
+    }
+
+    fn is_active(self, session: &EditorSession) -> bool {
+        match self {
+            Self::Heading(level) => session.is_active(
+                Some("heading"),
+                Some(Attrs::from_iter([("level".to_owned(), json!(level))])),
+            ),
+            Self::Bold => session.is_active(Some("bold"), None),
+            Self::Italic => session.is_active(Some("italic"), None),
+            Self::Strike => session.is_active(Some("strike"), None),
+            Self::InlineCode => session.is_active(Some("code"), None),
+            Self::BulletList => session.is_active(Some("bulletList"), None),
+            Self::OrderedList => session.is_active(Some("orderedList"), None),
+            Self::TaskList => session.is_active(Some("taskList"), None),
+            Self::Blockquote => session.is_active(Some("blockquote"), None),
+            Self::CodeBlock => session.is_active(Some("codeBlock"), None),
+            Self::Undo | Self::Redo | Self::HorizontalRule => false,
+        }
+    }
+
+    fn is_enabled(self, session: &EditorSession) -> bool {
+        match self {
+            Self::Undo => history::undo_depth(&session.state()) > 0,
+            Self::Redo => history::redo_depth(&session.state()) > 0,
+            _ => true,
+        }
+    }
+}
+
+/// Render the Markdown formatting toolbar docked at the top of the editor card.
+fn markdown_toolbar(
+    editor_session: Signal<EditorSession>,
+    draft_content: Signal<String>,
+    draft_files: Signal<Vec<SubFileEntry>>,
+    active_file_idx: Signal<usize>,
+    toolbar_rev: Signal<u64>,
+    theme: &ClippiTheme,
+) -> impl IntoElement {
+    let ctx = ToolbarCtx {
+        editor_session,
+        draft_content,
+        draft_files,
+        active_file_idx,
+        toolbar_rev,
+        theme: *theme,
+    };
+
+    view()
+        .w_full()
+        .h(px(32.0))
+        .bg(theme.input_bg)
+        .border_b(px(1.0))
+        .border_color(theme.divider)
+        .px(px(6.0))
+        .flex_row()
+        .items_center()
+        .child(
+            scroll().horizontal().w_full().child(
+                view()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(2.0))
+                    .child(toolbar_btn("↶", "撤销 (Ctrl+Z)", ToolbarAction::Undo, &ctx))
+                    .child(toolbar_btn("↷", "重做 (Ctrl+Y)", ToolbarAction::Redo, &ctx))
+                    .child(toolbar_divider(theme.divider))
+                    .child(toolbar_btn(
+                        "H1",
+                        "一级标题 (# )",
+                        ToolbarAction::Heading(1),
+                        &ctx,
+                    ))
+                    .child(toolbar_btn(
+                        "H2",
+                        "二级标题 (## )",
+                        ToolbarAction::Heading(2),
+                        &ctx,
+                    ))
+                    .child(toolbar_btn(
+                        "H3",
+                        "三级标题 (### )",
+                        ToolbarAction::Heading(3),
+                        &ctx,
+                    ))
+                    .child(toolbar_divider(theme.divider))
+                    .child(toolbar_btn("B", "加粗 (Ctrl+B)", ToolbarAction::Bold, &ctx))
+                    .child(toolbar_btn(
+                        "I",
+                        "斜体 (Ctrl+I)",
+                        ToolbarAction::Italic,
+                        &ctx,
+                    ))
+                    .child(toolbar_btn(
+                        "S",
+                        "删除线 (~~text~~)",
+                        ToolbarAction::Strike,
+                        &ctx,
+                    ))
+                    .child(toolbar_btn(
+                        "</>",
+                        "行内代码 (`code`)",
+                        ToolbarAction::InlineCode,
+                        &ctx,
+                    ))
+                    .child(toolbar_divider(theme.divider))
+                    .child(toolbar_btn(
+                        "• 列表",
+                        "无序列表 (- )",
+                        ToolbarAction::BulletList,
+                        &ctx,
+                    ))
+                    .child(toolbar_btn(
+                        "1. 列表",
+                        "有序列表 (1. )",
+                        ToolbarAction::OrderedList,
+                        &ctx,
+                    ))
+                    .child(toolbar_btn(
+                        "☑ 任务",
+                        "任务列表 ([ ] )",
+                        ToolbarAction::TaskList,
+                        &ctx,
+                    ))
+                    .child(toolbar_divider(theme.divider))
+                    .child(toolbar_btn(
+                        "❝ 引用",
+                        "引用块 (> )",
+                        ToolbarAction::Blockquote,
+                        &ctx,
+                    ))
+                    .child(toolbar_btn(
+                        "{ } 代码块",
+                        "代码块 (```)",
+                        ToolbarAction::CodeBlock,
+                        &ctx,
+                    ))
+                    .child(toolbar_btn(
+                        "―",
+                        "插入分割线 (---)",
+                        ToolbarAction::HorizontalRule,
+                        &ctx,
+                    )),
+            ),
+        )
+}
+
+#[derive(Clone, Copy)]
+struct ToolbarCtx {
+    editor_session: Signal<EditorSession>,
+    draft_content: Signal<String>,
+    draft_files: Signal<Vec<SubFileEntry>>,
+    active_file_idx: Signal<usize>,
+    toolbar_rev: Signal<u64>,
+    theme: ClippiTheme,
+}
+
+fn toolbar_divider(color: Rgba) -> impl IntoElement {
+    view().w(px(1.0)).h(px(14.0)).mx(px(3.0)).bg(color)
+}
+
+fn toolbar_btn(
+    label: &'static str,
+    tip: &'static str,
+    action: ToolbarAction,
+    ctx: &ToolbarCtx,
+) -> impl IntoElement {
+    let editor_session = ctx.editor_session;
+    let draft_content = ctx.draft_content;
+    let draft_files = ctx.draft_files;
+    let active_file_idx = ctx.active_file_idx;
+    let toolbar_rev = ctx.toolbar_rev;
+    let theme = ctx.theme;
+    let accent = theme.accent;
+    let accent_soft = theme.accent_soft;
+    let text_1 = theme.text_1;
+    let text_3 = theme.text_3;
+    let btn_hover = theme.btn_hover;
+
+    let label_el = text(label)
+        .text_xs()
+        .font_weight(
+            if matches!(action, ToolbarAction::Bold | ToolbarAction::Heading(_)) {
+                FontWeight::BOLD
+            } else {
+                FontWeight::MEDIUM
+            },
+        )
+        .text_color(move || {
+            let _ = toolbar_rev.get();
+            editor_session.with_untracked(|s| {
+                if !action.is_enabled(s) {
+                    text_3
+                } else if action.is_active(s) {
+                    accent
+                } else {
+                    text_1
+                }
+            })
+        });
+
+    view()
+        .h(px(24.0))
+        .px(px(6.0))
+        .rounded(px(4.0))
+        .items_center()
+        .justify_center()
+        .cursor_pointer()
+        .bg(move || {
+            let _ = toolbar_rev.get();
+            editor_session.with_untracked(|s| {
+                if action.is_active(s) {
+                    accent_soft
+                } else {
+                    rgba(0x0000_0000)
+                }
+            })
+        })
+        .hover(move |s| s.bg(btn_hover))
+        .tooltip(tooltip_box(tip, theme))
+        .on_press(move || {
+            editor_session.with_untracked(|session| {
+                if let Some(cmd) = action.build_command(session) {
+                    let _ = session.run(&cmd);
+                    session.focus();
+                }
+            });
+            sync_editor_to_draft(editor_session, draft_content, draft_files, active_file_idx);
+            toolbar_rev.update(|v| *v = v.wrapping_add(1));
+        })
+        .child(label_el)
+}
+
+/// Tailwind part classes styling NSH's headless `RichEditor` for Markdown editing.
+fn markdown_editor_classes(is_dark: bool) -> RichEditorClasses {
+    let mut classes = RichEditorClasses::default();
+    classes.root = Some("w-full h-full".into());
+    classes.content = Some("p-3 gap-1.5 text-sm leading-relaxed".into());
+    classes.placeholder = Some("opacity-50".into());
+    classes.list_marker = Some("opacity-70 font-medium".into());
+    classes.task_checkbox = Some("w-3.5 h-3.5 rounded border".into());
+
+    let code_block_cls = if is_dark {
+        "bg-zinc-900 text-zinc-100 font-mono text-xs rounded-md px-3 py-2 my-1 border border-zinc-700"
+    } else {
+        "bg-zinc-100 text-zinc-800 font-mono text-xs rounded-md px-3 py-2 my-1 border border-zinc-200"
+    };
+    let inline_code_cls = if is_dark {
+        "bg-zinc-800 text-emerald-300 font-mono text-xs px-1 rounded"
+    } else {
+        "bg-zinc-100 text-emerald-700 font-mono text-xs px-1 rounded"
+    };
+    let quote_cls = if is_dark {
+        "border-l-2 border-zinc-500 pl-3 py-0.5 text-zinc-300 italic my-1"
+    } else {
+        "border-l-2 border-zinc-300 pl-3 py-0.5 text-zinc-600 italic my-1"
+    };
+    let hr_cls = if is_dark {
+        "border-t border-zinc-700 my-2"
+    } else {
+        "border-t border-zinc-200 my-2"
+    };
+
+    classes.nodes = Some(BTreeMap::from([
+        ("paragraph".to_owned(), "text-sm leading-relaxed".to_owned()),
+        ("heading".to_owned(), "font-bold mt-2 mb-1".to_owned()),
+        (
+            "heading[level=1]".to_owned(),
+            "text-xl font-bold".to_owned(),
+        ),
+        (
+            "heading[level=2]".to_owned(),
+            "text-lg font-bold".to_owned(),
+        ),
+        (
+            "heading[level=3]".to_owned(),
+            "text-base font-semibold".to_owned(),
+        ),
+        ("blockquote".to_owned(), quote_cls.to_owned()),
+        ("codeBlock".to_owned(), code_block_cls.to_owned()),
+        ("bulletList".to_owned(), "pl-5 gap-0.5".to_owned()),
+        ("orderedList".to_owned(), "pl-5 gap-0.5".to_owned()),
+        ("taskList".to_owned(), "pl-5 gap-0.5".to_owned()),
+        ("horizontalRule".to_owned(), hr_cls.to_owned()),
+    ]));
+    classes.marks = Some(BTreeMap::from([
+        ("bold".to_owned(), "font-bold".to_owned()),
+        ("italic".to_owned(), "italic".to_owned()),
+        ("strike".to_owned(), "line-through opacity-75".to_owned()),
+        ("code".to_owned(), inline_code_cls.to_owned()),
+        ("link".to_owned(), "underline text-emerald-600".to_owned()),
+    ]));
+    classes
 }
 
 #[allow(clippy::too_many_arguments)]
