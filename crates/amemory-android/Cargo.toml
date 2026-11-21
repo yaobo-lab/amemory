@@ -1,0 +1,17 @@
+[package]
+name = "amemory-android"
+version = "0.2.0"
+edition = "2024"
+license = "Apache-2.0"
+description = "Amemory Android JNI bridge and packaging target"
+
+[lib]
+name = "nsh"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+xcat = { path = "../.." }
+nsh-core = "0.6.1"
+
+[target.'cfg(target_os = "android")'.dependencies]
+nsh-platform-android = "0.6.1"

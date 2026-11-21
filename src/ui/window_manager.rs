@@ -3,6 +3,7 @@
 use std::sync::{Arc, Mutex, mpsc};
 
 use nsh_core::element::{Component, IntoElement, NoEvent, Scope, set_interval};
+#[cfg(target_os = "windows")]
 use nsh_platform_windows::{AppOptions, AppSource, Root, run_app};
 
 use super::root::root_view;
@@ -286,13 +287,19 @@ impl Component for AmemoryGuiComponent {
     }
 }
 
-/// Launch the complete Native Shell GUI application.
-pub fn run_gui(runtime: Arc<AmemoryRuntime>, config: AppConfig) {
+/// Initialize global runtime context (used by desktop bootstrap or mobile JNI bridge).
+pub fn init_runtime_context(runtime: Arc<AmemoryRuntime>, config: AppConfig) {
     let _ = GLOBAL_RUNTIME.set(runtime);
     let _ = GLOBAL_CONFIG.set(config);
     if let Ok(handle) = tokio::runtime::Handle::try_current() {
         let _ = TOKIO_HANDLE.set(handle);
     }
+}
+
+/// Launch the complete Native Shell GUI application on Windows desktop.
+#[cfg(target_os = "windows")]
+pub fn run_gui(runtime: Arc<AmemoryRuntime>, config: AppConfig) {
+    init_runtime_context(runtime, config);
 
     let root = Root::of::<AmemoryGuiComponent>()
         .app_id("com.amemory.app")
@@ -309,4 +316,11 @@ pub fn run_gui(runtime: Arc<AmemoryRuntime>, config: AppConfig) {
     };
 
     let _ = run_app(AppSource::Rust(root), options);
+}
+
+/// Launch fallback for non-Windows platforms (mobile uses Activity/JNI host).
+#[cfg(not(target_os = "windows"))]
+pub fn run_gui(runtime: Arc<AmemoryRuntime>, config: AppConfig) {
+    init_runtime_context(runtime, config);
+    tracing::info!("移动端/非Windows平台由宿主加载 libnsh.so 并启动 Activity 渲染");
 }

@@ -62,7 +62,7 @@ workspace = true
 
 [workspace]
 resolver = "2"
-members = ["crates/domain", "crates/mcp", "crates/adapter"]
+members = ["crates/domain", "crates/mcp", "crates/adapter", "crates/amemory-android"]
 exclude = ["crates/xerj", "crates/xerj/engine"]
 
 [workspace.package]
