@@ -165,6 +165,7 @@ pub fn settings_panel_view(
         ActiveView::Settings(t) => t,
         _ => 0,
     });
+    let slide_dir = signal(1.0_f32);
 
     let tab_keys = [
         I18nKey::SettingTabGeneral,
@@ -224,23 +225,23 @@ pub fn settings_panel_view(
         // ── 2. 6-Tab Navigation Bar ──
         .child(
             view()
-                .h(px(32.0))
+                .h(px(34.0))
                 .w_full()
                 .bg(move || store.theme().card_bg)
                 .flex_row()
                 .items_center()
                 .border_b(px(1.0))
                 .border_color(move || store.theme().divider)
-                .child(tab_button(0, tab_keys[0], active_tab, store))
-                .child(tab_button(1, tab_keys[1], active_tab, store))
-                .child(tab_button(2, tab_keys[2], active_tab, store))
-                .child(tab_button(3, tab_keys[3], active_tab, store))
-                .child(tab_button(4, tab_keys[4], active_tab, store))
-                .child(tab_button(5, tab_keys[5], active_tab, store)),
+                .child(tab_button(0, tab_keys[0], active_tab, slide_dir, store))
+                .child(tab_button(1, tab_keys[1], active_tab, slide_dir, store))
+                .child(tab_button(2, tab_keys[2], active_tab, slide_dir, store))
+                .child(tab_button(3, tab_keys[3], active_tab, slide_dir, store))
+                .child(tab_button(4, tab_keys[4], active_tab, slide_dir, store))
+                .child(tab_button(5, tab_keys[5], active_tab, slide_dir, store)),
         )
-        // ── 3. Content Router ──
+        // ── 3. Content Router (with directional slide + fade transition) ──
         .child(
-            view().flex_1().w_full().p(px(8.0)).child(
+            view().flex_1().w_full().p(px(8.0)).overflow_hidden().child(
                 scroll().w_full().h_full().child(
                     view()
                         .w_full()
@@ -248,26 +249,49 @@ pub fn settings_panel_view(
                         .gap(px(10.0))
                         .child(when(
                             move || active_tab.get() == 0,
-                            move || general::render_general_tab(store, store.theme()),
+                            move || {
+                                animated_tab_pane(
+                                    slide_dir.get_untracked(),
+                                    general::render_general_tab(store, store.theme()),
+                                )
+                            },
                         ))
                         .child(when(
                             move || active_tab.get() == 1,
-                            move || storage::render_storage_tab(store, store.theme()),
+                            move || {
+                                animated_tab_pane(
+                                    slide_dir.get_untracked(),
+                                    storage::render_storage_tab(store, store.theme()),
+                                )
+                            },
                         ))
                         .child(when(move || active_tab.get() == 2, {
                             let on_rebuild = on_rebuild_index;
                             move || {
                                 let f = on_rebuild.clone();
-                                xerj_engine::render_xerj_tab(store, store.theme(), move || f())
+                                animated_tab_pane(
+                                    slide_dir.get_untracked(),
+                                    xerj_engine::render_xerj_tab(store, store.theme(), move || f()),
+                                )
                             }
                         }))
                         .child(when(
                             move || active_tab.get() == 3,
-                            move || mcp_hotkey::render_mcp_hotkey_tab(store, store.theme()),
+                            move || {
+                                animated_tab_pane(
+                                    slide_dir.get_untracked(),
+                                    mcp_hotkey::render_mcp_hotkey_tab(store, store.theme()),
+                                )
+                            },
                         ))
                         .child(when(
                             move || active_tab.get() == 4,
-                            move || data_logger::render_data_logger_tab(store, store.theme()),
+                            move || {
+                                animated_tab_pane(
+                                    slide_dir.get_untracked(),
+                                    data_logger::render_data_logger_tab(store, store.theme()),
+                                )
+                            },
                         ))
                         .child(when(move || active_tab.get() == 5, {
                             let check = on_check_update;
@@ -277,12 +301,15 @@ pub fn settings_panel_view(
                                 let c = check.clone();
                                 let d = dl.clone();
                                 let r = restart.clone();
-                                version::render_version_tab(
-                                    store,
-                                    store.theme(),
-                                    move || c(),
-                                    move || d(),
-                                    move || r(),
+                                animated_tab_pane(
+                                    slide_dir.get_untracked(),
+                                    version::render_version_tab(
+                                        store,
+                                        store.theme(),
+                                        move || c(),
+                                        move || d(),
+                                        move || r(),
+                                    ),
                                 )
                             }
                         })),
@@ -291,29 +318,43 @@ pub fn settings_panel_view(
         )
 }
 
+fn animated_tab_pane(direction: f32, content: impl IntoElement + 'static) -> impl IntoElement {
+    let mut timing = KeyframeTiming::default();
+    timing.duration_ms = 200.0;
+    timing.easing = Easing::Bezier(0.16, 1.0, 0.3, 1.0);
+    let offset_x = if direction >= 0.0 { 18.0 } else { -18.0 };
+    let pane_motion = motion().entering(
+        MotionSpec::new(timing)
+            .values(MotionChannel::Opacity, [0.0, 1.0])
+            .values(MotionChannel::TranslateX, [offset_x, 0.0]),
+    );
+
+    view().w_full().bind_motion(&pane_motion).child(content)
+}
+
 fn tab_button(
     index: usize,
     key: I18nKey,
     active_tab: Signal<usize>,
+    slide_dir: Signal<f32>,
     store: AppStore,
 ) -> impl IntoElement {
     view()
+        .relative()
         .flex_1()
         .h_full()
         .items_center()
         .justify_center()
         .cursor_pointer()
-        .border_b(move || {
-            if active_tab.get() == index {
-                px(2.0)
-            } else {
-                px(0.0)
-            }
-        })
-        .border_color(move || store.theme().accent)
+        .hover(move |s| s.bg(store.theme().btn_hover))
+        .active(|s| s.opacity(0.75))
         .on_press(move || {
-            active_tab.set(index);
-            store.active_view.set(ActiveView::Settings(index));
+            let prev = active_tab.get_untracked();
+            if prev != index {
+                slide_dir.set(if index > prev { 1.0 } else { -1.0 });
+                active_tab.set(index);
+                store.active_view.set(ActiveView::Settings(index));
+            }
         })
         .child(
             text(move || store.tr(key))
@@ -327,4 +368,27 @@ fn tab_button(
                 .font_weight(FontWeight::BOLD)
                 .text_xs(),
         )
+        .child(when(
+            move || active_tab.get() == index,
+            move || {
+                let mut timing = KeyframeTiming::default();
+                timing.duration_ms = 180.0;
+                timing.easing = Easing::Bezier(0.16, 1.0, 0.3, 1.0);
+                let indicator_motion = motion().entering(
+                    MotionSpec::new(timing)
+                        .values(MotionChannel::ScaleX, [0.25, 1.0])
+                        .values(MotionChannel::Opacity, [0.0, 1.0]),
+                );
+
+                view()
+                    .absolute()
+                    .bottom(px(0.0))
+                    .left(px(8.0))
+                    .right(px(8.0))
+                    .h(px(2.5))
+                    .rounded(px(2.0))
+                    .bg(move || store.theme().accent)
+                    .bind_motion(&indicator_motion)
+            },
+        ))
 }

@@ -174,7 +174,6 @@ pub fn root_view(
                                     get_theme(),
                                     move |item, is_new| {
                                         save_cb2(item, is_new);
-                                        store.active_view.set(ActiveView::ClipboardList);
                                     },
                                     move || {
                                         store.active_view.set(ActiveView::ClipboardList);
@@ -322,7 +321,7 @@ pub fn root_view(
                                 } else {
                                     cfg.xerj.data_dir
                                 };
-                                crate::services::amemory_runtime::open_path_in_explorer(&path);
+                                crate::services::runtime::open_path_in_explorer(&path);
                             },
                             // on_edit
                             move || {

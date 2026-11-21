@@ -3,7 +3,7 @@
 use nsh_core::element::ImageSrc;
 use nsh_core::prelude::*;
 
-use super::assets::{action_icons, glyphs};
+use super::assets::{action_icons, glyphs, logo_notext_data_uri};
 use super::components::tooltip_box;
 use super::theme::ClippiTheme;
 use crate::core::i18n_keys::I18nKey;
@@ -73,7 +73,20 @@ pub fn titlebar_view(
             let default_right = if cfg!(windows) { 140.0 } else { 4.0 };
             px(right_sys.max(default_right))
         })
-        // Window drag spacer area on the left (title moved to native window frame)
+        // Left-side app icon + window drag spacer area
+        .child(
+            view()
+                .flex_row()
+                .items_center()
+                .gap(px(6.0))
+                .h_full()
+                .window_drag(true)
+                .child(
+                    image(logo_notext_data_uri())
+                        .size(px(20.0))
+                        .rounded(px(4.0)),
+                ),
+        )
         .child(view().flex_1().h_full().window_drag(true))
         // Right-side 28x28 action icon buttons
         .child(

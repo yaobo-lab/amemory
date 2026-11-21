@@ -6,7 +6,7 @@ use domain::memory::SyncReport;
 use eyre::Result;
 use tracing::{error, info};
 
-use super::amemory_runtime::AmemoryRuntime;
+use super::runtime::AmemoryRuntime;
 
 /// Synchronize all skills and books in the background.
 pub async fn run_catalog_sync(runtime: Arc<AmemoryRuntime>) -> Result<(SyncReport, SyncReport)> {

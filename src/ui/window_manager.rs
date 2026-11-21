@@ -8,7 +8,7 @@ use nsh_platform_windows::{AppOptions, AppSource, Root, run_app};
 use super::root::root_view;
 use crate::config::AppConfig;
 use crate::core::types::KnowledgeItem;
-use crate::services::amemory_runtime::AmemoryRuntime;
+use crate::services::runtime::AmemoryRuntime;
 use crate::state::app::AppStore;
 
 type UiAction = Box<dyn FnOnce(AppStore) + Send + 'static>;

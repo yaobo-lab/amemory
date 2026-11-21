@@ -6,7 +6,7 @@ use std::sync::Arc;
 use domain::book::BookCatalog;
 use eyre::{Result, WrapErr};
 
-use super::amemory_runtime::AmemoryRuntime;
+use super::runtime::AmemoryRuntime;
 
 /// Import a local document (PDF, Word, Excel, PPT, Markdown, TXT) into a target Book.
 pub async fn import_document_to_book(

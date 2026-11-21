@@ -544,7 +544,9 @@ impl AmemoryRuntime {
             let mut extra_files = Vec::new();
             for sf in &item.sub_files {
                 if sf.relative_path == "SKILL.md" {
-                    skill_markdown = Some(sf.content.clone());
+                    if sf.content.trim_start().starts_with("---") {
+                        skill_markdown = Some(sf.content.clone());
+                    }
                 } else if !sf.relative_path.trim().is_empty() {
                     extra_files.push(SkillFileInput {
                         relative_path: sf.relative_path.clone(),
@@ -610,7 +612,9 @@ impl AmemoryRuntime {
             let mut extra_files = Vec::new();
             for sf in &item.sub_files {
                 if sf.relative_path == "BOOK.md" {
-                    book_markdown = Some(sf.content.clone());
+                    if sf.content.trim_start().starts_with("---") {
+                        book_markdown = Some(sf.content.clone());
+                    }
                 } else if !sf.relative_path.trim().is_empty() {
                     extra_files.push(BookFileInput {
                         relative_path: sf.relative_path.clone(),

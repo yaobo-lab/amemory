@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use toolkit_rs::chrono::Utc;
 
-use super::amemory_runtime::AmemoryRuntime;
+use super::runtime::AmemoryRuntime;
 use super::update::{UpdateChecker, UpdatePhase, scheduled_update_check_due};
 use crate::core::settings::GuiSettings;
 use crate::state::app::AppStore;

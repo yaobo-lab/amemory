@@ -1,8 +1,6 @@
 //! Edit and create panel for Knowledge items (Skill, Book, Memory, Note)
 //! 1:1 replica of Clippi edit panel layout and controls.
 
-use std::collections::BTreeMap;
-
 use nsh_base::input;
 use nsh_base::rich_editor::{
     commands::{BoxCommand, command, tiptap},
@@ -18,9 +16,12 @@ use nsh_base::rich_editor::{
 };
 use nsh_core::prelude::*;
 use serde_json::json;
+use std::collections::BTreeMap;
+use std::rc::Rc;
 use toolkit_rs::chrono::Utc;
 
 use super::assets::glyphs;
+use super::components::modal_overlay::modal_overlay_view;
 use super::components::tooltip_box;
 use super::rich_preview::rich_preview_view;
 use super::theme::ClippiTheme;
@@ -103,10 +104,15 @@ pub fn edit_panel_view(
     } else {
         initial_item.owner.clone()
     });
+    let (initial_fm, initial_body) = split_frontmatter(&initial_content);
+    let active_frontmatter = signal(initial_fm);
     let editor_session = signal(EditorSession::new(
-        build_markdown_state(&initial_content),
+        build_markdown_state(&initial_body),
         NodeViews::new(),
     ));
+    let is_new_item = signal(is_new);
+    let saved_file_snapshot = signal(initial_content.clone());
+    let is_dirty = signal(false);
     let draft_content = signal(initial_content);
     let draft_files = signal(initial_files);
     let active_file_idx = signal(initial_file_idx);
@@ -116,9 +122,104 @@ pub fn edit_panel_view(
     let preview_open = signal(false);
     let new_subfile_open = signal(false);
     let new_subfile_path = signal(String::new());
+    let file_dropdown_open = signal(false);
+    let pending_switch_idx: Signal<Option<usize>> = signal(None);
     let find_text = signal(String::new());
     let replace_text = signal(String::new());
     let toolbar_rev = signal(0u64);
+
+    let on_save: Rc<dyn Fn(KnowledgeItem, bool)> = Rc::new(on_save);
+    let perform_save: Rc<dyn Fn()> = {
+        let on_save = Rc::clone(&on_save);
+        Rc::new(move || {
+            let mut item = initial_item.clone();
+            let current_txt = editor_session
+                .with_untracked(serialize_session_markdown)
+                .map_or_else(
+                    || draft_content.get_untracked(),
+                    |body| {
+                        active_frontmatter
+                            .with_untracked(|fm| combine_frontmatter(fm.as_deref(), &body))
+                    },
+                );
+            let raw_title = draft_title.get_untracked();
+            let cur_kind = draft_kind.get_untracked();
+
+            let resolved_title = if raw_title.trim().is_empty() {
+                let first_line = current_txt
+                    .lines()
+                    .find(|l| !l.trim().is_empty())
+                    .unwrap_or("未命名条目");
+                let clean = first_line.trim_start_matches(['#', ' ', '-']).trim();
+                if clean.is_empty() {
+                    format!("新建{}", cur_kind.label())
+                } else {
+                    clean.chars().take(24).collect()
+                }
+            } else {
+                raw_title.trim().to_string()
+            };
+
+            item.title = resolved_title;
+            let idx = active_file_idx.get_untracked();
+            draft_files.update(|files| {
+                if let Some(slot) = files.get_mut(idx) {
+                    slot.content.clone_from(&current_txt);
+                }
+            });
+            saved_file_snapshot.set(current_txt.clone());
+            is_dirty.set(false);
+            draft_content.set(current_txt.clone());
+
+            let updated_files = draft_files.get_untracked();
+            if let Some(primary) = updated_files.first() {
+                item.content.clone_from(&primary.content);
+            } else {
+                item.content = current_txt;
+            }
+            item.sub_files = updated_files;
+            item.kind = cur_kind;
+            item.tags = draft_tags
+                .get_untracked()
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+            item.updated_at = Some(Utc::now().to_rfc3339());
+            let was_new = is_new_item.get_untracked();
+            is_new_item.set(false);
+            on_save(item, was_new);
+        })
+    };
+    let save_for_header = Rc::clone(&perform_save);
+    let save_for_modal = perform_save;
+
+    let switch_to_file = move |target_idx: usize, discard_current: bool| {
+        let prev_idx = active_file_idx.get_untracked();
+        if prev_idx != target_idx {
+            let content_to_store = if discard_current {
+                saved_file_snapshot.get_untracked()
+            } else {
+                draft_content.get_untracked()
+            };
+            draft_files.update(|list| {
+                if let Some(slot) = list.get_mut(prev_idx) {
+                    slot.content = content_to_store;
+                }
+            });
+            let next_txt = draft_files
+                .get_untracked()
+                .get(target_idx)
+                .map(|f| f.content.clone())
+                .unwrap_or_default();
+            active_file_idx.set(target_idx);
+            load_markdown_into_editor(editor_session, active_frontmatter, &next_txt);
+            saved_file_snapshot.set(next_txt.clone());
+            is_dirty.set(false);
+            draft_content.set(next_txt);
+            toolbar_rev.update(|v| *v = v.wrapping_add(1));
+        }
+    };
 
     let header_title = if is_new {
         I18nKey::EditTitleNew.text()
@@ -127,6 +228,7 @@ pub fn edit_panel_view(
     };
 
     view()
+        .relative()
         .w_full()
         .h_full()
         .flex_col()
@@ -181,53 +283,7 @@ pub fn edit_panel_view(
                         .justify_center()
                         .cursor_pointer()
                         .on_press(move || {
-                            let mut item = initial_item.clone();
-                            let current_txt = editor_session
-                                .with_untracked(serialize_session_markdown)
-                                .unwrap_or_else(|| draft_content.get_untracked());
-                            let raw_title = draft_title.get();
-                            let cur_kind = draft_kind.get();
-
-                            let resolved_title = if raw_title.trim().is_empty() {
-                                let first_line = current_txt
-                                    .lines()
-                                    .find(|l| !l.trim().is_empty())
-                                    .unwrap_or("未命名条目");
-                                let clean = first_line
-                                    .trim_start_matches(['#', ' ', '-'])
-                                    .trim();
-                                if clean.is_empty() {
-                                    format!("新建{}", cur_kind.label())
-                                } else {
-                                    clean.chars().take(24).collect()
-                                }
-                            } else {
-                                raw_title.trim().to_string()
-                            };
-
-                            item.title = resolved_title;
-                            let idx = active_file_idx.get();
-                            draft_files.update(|files| {
-                                if let Some(slot) = files.get_mut(idx) {
-                                    slot.content.clone_from(&current_txt);
-                                }
-                            });
-                            let updated_files = draft_files.get();
-                            if let Some(primary) = updated_files.first() {
-                                item.content.clone_from(&primary.content);
-                            } else {
-                                item.content = current_txt;
-                            }
-                            item.sub_files = updated_files;
-                            item.kind = cur_kind;
-                            item.tags = draft_tags
-                                .get()
-                                .split(',')
-                                .map(|s| s.trim().to_string())
-                                .filter(|s| !s.is_empty())
-                                .collect();
-                            item.updated_at = Some(Utc::now().to_rfc3339());
-                            on_save(item, is_new);
+                            save_for_header();
                         })
                         .child(
                             text(I18nKey::EditSave.text())
@@ -444,9 +500,14 @@ pub fn edit_panel_view(
                                         if did_replace {
                                             let idx = active_file_idx.get_untracked();
                                             let latest = draft_content.get_untracked();
-                                            editor_session.with_untracked(|s| {
-                                                s.update_state(build_markdown_state(&latest));
-                                            });
+                                            load_markdown_into_editor(
+                                                editor_session,
+                                                active_frontmatter,
+                                                &latest,
+                                            );
+                                            is_dirty.set(
+                                                latest != saved_file_snapshot.get_untracked(),
+                                            );
                                             draft_files.update(|list| {
                                                 if let Some(slot) = list.get_mut(idx) {
                                                     slot.content = latest;
@@ -483,9 +544,12 @@ pub fn edit_panel_view(
                                         });
                                         let idx = active_file_idx.get_untracked();
                                         let latest = draft_content.get_untracked();
-                                        editor_session.with_untracked(|s| {
-                                            s.update_state(build_markdown_state(&latest));
-                                        });
+                                        load_markdown_into_editor(
+                                            editor_session,
+                                            active_frontmatter,
+                                            &latest,
+                                        );
+                                        is_dirty.set(latest != saved_file_snapshot.get_untracked());
                                         draft_files.update(|list| {
                                             if let Some(slot) = list.get_mut(idx) {
                                                 slot.content = latest;
@@ -605,20 +669,80 @@ pub fn edit_panel_view(
                                         ),
                                 )
                                 .child(
-                                    text(move || {
-                                        let idx = active_file_idx.get();
-                                        let list = draft_files.get();
-                                        list.get(idx).map_or_else(String::new, |f| {
-                                            format!(
-                                                "当前: {} ({} 行 · {} B)",
-                                                f.relative_path,
-                                                draft_content.get().lines().count(),
-                                                draft_content.get().len()
-                                            )
-                                        })
-                                    })
-                                    .text_color(accent)
-                                    .text_xs(),
+                                    view()
+                                        .flex_row()
+                                        .items_center()
+                                        .gap(px(5.0))
+                                        .child(
+                                            text("当前:")
+                                                .text_color(text_3)
+                                                .text_xs(),
+                                        )
+                                        .child(
+                                            view()
+                                                .h(px(24.0))
+                                                .px(px(8.0))
+                                                .rounded(px(5.0))
+                                                .bg(accent_soft)
+                                                .border(px(1.0))
+                                                .border_color(accent)
+                                                .flex_row()
+                                                .items_center()
+                                                .gap(px(5.0))
+                                                .cursor_pointer()
+                                                .hover(move |s| s.opacity(0.88))
+                                                .tooltip(tooltip_box("点击下拉切换文件", theme))
+                                                .on_press(move || {
+                                                    file_dropdown_open.update(|v| *v = !*v);
+                                                })
+                                                .child(
+                                                    text(move || {
+                                                        let idx = active_file_idx.get();
+                                                        let list = draft_files.get();
+                                                        list.get(idx).map_or(glyphs::SKILL, |f| {
+                                                            file_icon_for_path(&f.relative_path)
+                                                        })
+                                                    })
+                                                    .font_family("iconfont")
+                                                    .text_color(accent)
+                                                    .text_xs(),
+                                                )
+                                                .child(
+                                                    text(move || {
+                                                        let idx = active_file_idx.get();
+                                                        let list = draft_files.get();
+                                                        let dirty_mark =
+                                                            if is_dirty.get() { " •" } else { "" };
+                                                        list.get(idx).map_or_else(
+                                                            || "未选择文件".to_string(),
+                                                            |f| {
+                                                                let content = draft_content.get();
+                                                                format!(
+                                                                    "{}{} ({} 行 · {} B)",
+                                                                    f.relative_path,
+                                                                    dirty_mark,
+                                                                    content.lines().count(),
+                                                                    content.len()
+                                                                )
+                                                            },
+                                                        )
+                                                    })
+                                                    .text_color(accent)
+                                                    .font_weight(FontWeight::MEDIUM)
+                                                    .text_xs(),
+                                                )
+                                                .child(
+                                                    text(move || {
+                                                        if file_dropdown_open.get() {
+                                                            "▴"
+                                                        } else {
+                                                            "▾"
+                                                        }
+                                                    })
+                                                    .text_color(accent)
+                                                    .text_xs(),
+                                                ),
+                                        ),
                                 ),
                         )
                         .child(
@@ -653,13 +777,8 @@ pub fn edit_panel_view(
                                                 .on_press(move || {
                                                     let raw_p = new_subfile_path.get().trim().replace('\\', "/");
                                                     if !raw_p.is_empty() {
-                                                        let prev_idx = active_file_idx.get_untracked();
-                                                        let cur_txt = draft_content.get_untracked();
                                                         let mut new_idx = 0;
                                                         draft_files.update(|list| {
-                                                            if let Some(slot) = list.get_mut(prev_idx) {
-                                                                slot.content = cur_txt;
-                                                            }
                                                             if let Some(pos) = list.iter().position(|x| x.relative_path == raw_p) {
                                                                 new_idx = pos;
                                                             } else {
@@ -670,19 +789,16 @@ pub fn edit_panel_view(
                                                                 new_idx = list.len() - 1;
                                                             }
                                                         });
-                                                        let next_txt = draft_files
-                                                            .get_untracked()
-                                                            .get(new_idx)
-                                                            .map(|f| f.content.clone())
-                                                            .unwrap_or_default();
-                                                        active_file_idx.set(new_idx);
-                                                        editor_session.with_untracked(|s| {
-                                                            s.update_state(build_markdown_state(&next_txt));
-                                                        });
-                                                        draft_content.set(next_txt);
                                                         new_subfile_path.set(String::new());
                                                         new_subfile_open.set(false);
-                                                        store.show_toast(format!("已切换到子文件: {raw_p}"));
+                                                        if active_file_idx.get_untracked() != new_idx {
+                                                            if is_dirty.get_untracked() {
+                                                                pending_switch_idx.set(Some(new_idx));
+                                                            } else {
+                                                                switch_to_file(new_idx, false);
+                                                                store.show_toast(format!("已切换到子文件: {raw_p}"));
+                                                            }
+                                                        }
                                                     }
                                                 })
                                                 .child(
@@ -693,82 +809,6 @@ pub fn edit_panel_view(
                                         )
                                 },
                             ),
-                        )
-                        .child(
-                            scroll()
-                                .horizontal()
-                                .w_full()
-                                .child(
-                                    view()
-                                        .flex_row()
-                                        .gap(px(4.0))
-                                        .child(each(
-                                            move || draft_files.get(),
-                                            |sf: &SubFileEntry| sf.relative_path.clone(),
-                                            move |sf_sig, idx_sig| {
-                                                let sf = sf_sig.get();
-                                                let idx = idx_sig.get();
-                                                let path_label = sf.relative_path.clone();
-                                                let path_tip = sf.relative_path;
-                                                let file_icon = if path_label.starts_with("scripts/") {
-                                                    glyphs::SCRIPT
-                                                } else if path_label.starts_with("references/") || path_label.starts_with("notes/") {
-                                                    glyphs::NOTE
-                                                } else if path_label == "BOOK.md" || path_label.starts_with("chapters/") {
-                                                    glyphs::BOOK
-                                                } else {
-                                                    glyphs::SKILL
-                                                };
-
-                                                view()
-                                                    .h(px(24.0))
-                                                    .px(px(8.0))
-                                                    .rounded(px(5.0))
-                                                    .bg(move || if active_file_idx.get() == idx_sig.get() { accent_soft } else { card_bg })
-                                                    .border(px(1.0))
-                                                    .border_color(move || if active_file_idx.get() == idx_sig.get() { accent } else { divider })
-                                                    .flex_row()
-                                                    .items_center()
-                                                    .gap(px(4.0))
-                                                    .cursor_pointer()
-                                                    .tooltip(tooltip_box(format!("切换查看/编辑: {path_tip}"), theme))
-                                                    .on_press(move || {
-                                                        let target_idx = idx_sig.get_untracked();
-                                                        let prev_idx = active_file_idx.get_untracked();
-                                                        if prev_idx != target_idx {
-                                                            let current_txt = draft_content.get_untracked();
-                                                            draft_files.update(|list| {
-                                                                if let Some(slot) = list.get_mut(prev_idx) {
-                                                                    slot.content = current_txt;
-                                                                }
-                                                            });
-                                                            let next_txt = draft_files
-                                                                .get_untracked()
-                                                                .get(target_idx)
-                                                                .map(|f| f.content.clone())
-                                                                .unwrap_or_default();
-                                                            active_file_idx.set(target_idx);
-                                                            editor_session.with_untracked(|s| {
-                                                                s.update_state(build_markdown_state(&next_txt));
-                                                            });
-                                                            draft_content.set(next_txt);
-                                                        }
-                                                    })
-                                                    .child(
-                                                        text(file_icon)
-                                                            .font_family("iconfont")
-                                                            .text_color(move || if active_file_idx.get() == idx { accent } else { text_2 })
-                                                            .text_xs(),
-                                                    )
-                                                    .child(
-                                                        text(path_label)
-                                                            .text_color(move || if active_file_idx.get() == idx { accent } else { text_1 })
-                                                            .font_weight(FontWeight::MEDIUM)
-                                                            .text_xs(),
-                                                    )
-                                            },
-                                        )),
-                                ),
                         )
                 },
             ),
@@ -799,6 +839,9 @@ pub fn edit_panel_view(
                             .overflow_hidden()
                             .child(markdown_toolbar(
                                 editor_session,
+                                active_frontmatter,
+                                saved_file_snapshot,
+                                is_dirty,
                                 draft_content,
                                 draft_files,
                                 active_file_idx,
@@ -817,6 +860,9 @@ pub fn edit_panel_view(
                                         .on_change(move |_: &_| {
                                             sync_editor_to_draft(
                                                 editor_session,
+                                                active_frontmatter,
+                                                saved_file_snapshot,
+                                                is_dirty,
                                                 draft_content,
                                                 draft_files,
                                                 active_file_idx,
@@ -831,6 +877,275 @@ pub fn edit_panel_view(
                     }),
                 ),
         )
+        // ── 7. File Switcher Dropdown Overlay ──
+        .child(when(
+            move || file_dropdown_open.get(),
+            move || {
+                let mut timing = KeyframeTiming::default();
+                timing.duration_ms = 140.0;
+                timing.easing = Easing::Bezier(0.16, 1.0, 0.3, 1.0);
+                let menu_motion = motion().entering(
+                    MotionSpec::new(timing)
+                        .values(MotionChannel::Opacity, [0.0, 1.0])
+                        .values(MotionChannel::TranslateY, [-6.0, 0.0]),
+                );
+
+                view()
+                    .absolute()
+                    .w_full()
+                    .h_full()
+                    .child(
+                        view()
+                            .absolute()
+                            .w_full()
+                            .h_full()
+                            .on_press(move || {
+                                file_dropdown_open.set(false);
+                            }),
+                    )
+                    .child(
+                        view()
+                            .absolute()
+                            .top(px(164.0))
+                            .right(px(10.0))
+                            .w(px(330.0))
+                            .max_h(px(240.0))
+                            .rounded(px(8.0))
+                            .bg(card_bg)
+                            .border(px(1.0))
+                            .border_color(divider)
+                            .shadow_lg()
+                            .overflow_hidden()
+                            .bind_motion(&menu_motion)
+                            .child(
+                                scroll().w_full().max_h(px(240.0)).p(px(4.0)).child(
+                                    view().flex_col().gap(px(2.0)).child(each(
+                                        move || draft_files.get(),
+                                        |sf: &SubFileEntry| sf.relative_path.clone(),
+                                        move |sf_sig, idx_sig| {
+                                            let sf = sf_sig.get();
+                                            let item_idx = idx_sig.get_untracked();
+                                            let path_label = sf.relative_path.clone();
+                                            let lines_cnt = sf.content.lines().count();
+                                            let bytes_cnt = sf.content.len();
+                                            let file_icon = file_icon_for_path(&path_label);
+
+                                            view()
+                                                .w_full()
+                                                .px(px(8.0))
+                                                .py(px(6.0))
+                                                .rounded(px(5.0))
+                                                .flex_row()
+                                                .items_center()
+                                                .justify_between()
+                                                .gap(px(6.0))
+                                                .cursor_pointer()
+                                                .bg(move || {
+                                                    if active_file_idx.get() == item_idx {
+                                                        accent_soft
+                                                    } else {
+                                                        rgba(0x0000_0000)
+                                                    }
+                                                })
+                                                .hover(move |s| s.bg(theme.btn_hover))
+                                                .on_press(move || {
+                                                    let prev_idx = active_file_idx.get_untracked();
+                                                    let dirty = is_dirty.get_untracked();
+                                                    file_dropdown_open.set(false);
+                                                    if prev_idx != item_idx {
+                                                        if dirty {
+                                                            pending_switch_idx.set(Some(item_idx));
+                                                        } else {
+                                                            switch_to_file(item_idx, false);
+                                                        }
+                                                    }
+                                                })
+                                                .child(
+                                                    view()
+                                                        .flex_1()
+                                                        .flex_row()
+                                                        .items_center()
+                                                        .gap(px(6.0))
+                                                        .overflow_hidden()
+                                                        .child(
+                                                            text(file_icon)
+                                                                .font_family("iconfont")
+                                                                .text_color(move || {
+                                                                    if active_file_idx.get()
+                                                                        == idx_sig.get()
+                                                                    {
+                                                                        accent
+                                                                    } else {
+                                                                        text_2
+                                                                    }
+                                                                })
+                                                                .text_xs(),
+                                                        )
+                                                        .child(
+                                                            text(path_label)
+                                                                .text_color(move || {
+                                                                    if active_file_idx.get()
+                                                                        == idx_sig.get()
+                                                                    {
+                                                                        accent
+                                                                    } else {
+                                                                        text_1
+                                                                    }
+                                                                })
+                                                                .font_weight(FontWeight::MEDIUM)
+                                                                .text_xs(),
+                                                        ),
+                                                )
+                                                .child(
+                                                    text(move || {
+                                                        if active_file_idx.get() == idx_sig.get() {
+                                                            "✓".to_string()
+                                                        } else {
+                                                            format!("{lines_cnt}行 · {bytes_cnt}B")
+                                                        }
+                                                    })
+                                                    .text_color(move || {
+                                                        if active_file_idx.get() == idx_sig.get() {
+                                                            accent
+                                                        } else {
+                                                            text_3
+                                                        }
+                                                    })
+                                                    .text_xs(),
+                                                )
+                                        },
+                                    )),
+                                ),
+                            ),
+                    )
+            },
+        ))
+        // ── 8. Unsaved Changes Confirmation Modal before Switching File ──
+        .child(when(
+            move || pending_switch_idx.get().is_some(),
+            {
+                let save_for_modal = Rc::clone(&save_for_modal);
+                move || {
+                    let save_and_switch = Rc::clone(&save_for_modal);
+                    let cur_name = draft_files
+                        .get_untracked()
+                        .get(active_file_idx.get_untracked())
+                        .map_or_else(|| "当前文件".to_string(), |f| f.relative_path.clone());
+
+                    modal_overlay_view(
+                        view()
+                            .w(px(340.0))
+                            .p(px(16.0))
+                            .rounded(px(10.0))
+                            .bg(card_bg)
+                            .border(px(1.0))
+                            .border_color(divider)
+                            .flex_col()
+                            .gap(px(12.0))
+                            .child(
+                                text("未保存的更改")
+                                    .text_color(text_1)
+                                    .font_weight(FontWeight::BOLD)
+                                    .text_sm(),
+                            )
+                            .child(
+                                text(format!(
+                                    "当前文件「{cur_name}」有未保存的修改，切换前是否保存？"
+                                ))
+                                .text_color(text_2)
+                                .text_xs(),
+                            )
+                            .child(
+                                view()
+                                    .flex_row()
+                                    .items_center()
+                                    .justify_end()
+                                    .gap(px(8.0))
+                                    .child(
+                                        view()
+                                            .h(px(28.0))
+                                            .px(px(12.0))
+                                            .rounded(px(6.0))
+                                            .bg(divider)
+                                            .items_center()
+                                            .justify_center()
+                                            .cursor_pointer()
+                                            .on_press(move || {
+                                                pending_switch_idx.set(None);
+                                            })
+                                            .child(text("取消").text_color(text_1).text_xs()),
+                                    )
+                                    .child(
+                                        view()
+                                            .h(px(28.0))
+                                            .px(px(12.0))
+                                            .rounded(px(6.0))
+                                            .bg(input_bg)
+                                            .border(px(1.0))
+                                            .border_color(divider)
+                                            .items_center()
+                                            .justify_center()
+                                            .cursor_pointer()
+                                            .on_press(move || {
+                                                if let Some(target) =
+                                                    pending_switch_idx.get_untracked()
+                                                {
+                                                    pending_switch_idx.set(None);
+                                                    switch_to_file(target, true);
+                                                }
+                                            })
+                                            .child(
+                                                text("不保存切换")
+                                                    .text_color(theme.danger)
+                                                    .text_xs(),
+                                            ),
+                                    )
+                                    .child(
+                                        view()
+                                            .h(px(28.0))
+                                            .px(px(12.0))
+                                            .rounded(px(6.0))
+                                            .bg(accent)
+                                            .items_center()
+                                            .justify_center()
+                                            .cursor_pointer()
+                                            .on_press(move || {
+                                                if let Some(target) =
+                                                    pending_switch_idx.get_untracked()
+                                                {
+                                                    save_and_switch();
+                                                    pending_switch_idx.set(None);
+                                                    switch_to_file(target, false);
+                                                }
+                                            })
+                                            .child(
+                                                text("保存并切换")
+                                                    .text_color(rgb(0xffffff))
+                                                    .font_weight(FontWeight::BOLD)
+                                                    .text_xs(),
+                                            ),
+                                    ),
+                            ),
+                        theme,
+                        move || {
+                            pending_switch_idx.set(None);
+                        },
+                    )
+                }
+            },
+        ))
+}
+
+fn file_icon_for_path(path_label: &str) -> &'static str {
+    if path_label.starts_with("scripts/") {
+        glyphs::SCRIPT
+    } else if path_label.starts_with("references/") || path_label.starts_with("notes/") {
+        glyphs::NOTE
+    } else if path_label == "BOOK.md" || path_label.starts_with("chapters/") {
+        glyphs::BOOK
+    } else {
+        glyphs::SKILL
+    }
 }
 
 /// Build an NSH `RichEditor` state initialized with starter + markdown plugins and parsed Markdown.
@@ -859,19 +1174,69 @@ fn serialize_session_markdown(session: &EditorSession) -> Option<String> {
         .ok()
 }
 
+/// Split an optional leading YAML frontmatter block (`---\n...\n---\n`) from Markdown body.
+///
+/// The WYSIWYG editor only parses and edits the body while preserving `SKILL.md` / `BOOK.md`
+/// YAML frontmatter losslessly across edits and saves.
+fn split_frontmatter(markdown: &str) -> (Option<String>, String) {
+    let normalized = markdown.replace("\r\n", "\n");
+    if let Some(rest) = normalized.strip_prefix("---\n") {
+        if let Some((fm, body)) = rest.split_once("\n---\n") {
+            let full_fm = format!("---\n{fm}\n---\n");
+            return (Some(full_fm), body.to_owned());
+        }
+        if let Some(fm) = rest.strip_suffix("\n---") {
+            let full_fm = format!("---\n{fm}\n---\n");
+            return (Some(full_fm), String::new());
+        }
+    }
+    (None, markdown.to_owned())
+}
+
+/// Recombine a preserved YAML frontmatter block with the serialized Markdown body.
+fn combine_frontmatter(frontmatter: Option<&str>, body: &str) -> String {
+    match frontmatter {
+        Some(fm) if body.is_empty() => fm.to_owned(),
+        Some(fm) => {
+            let trimmed_body = body.trim_start_matches('\n');
+            format!("{fm}\n{trimmed_body}")
+        }
+        None => body.to_owned(),
+    }
+}
+
+/// Load full Markdown text into the editor while preserving any leading YAML frontmatter.
+fn load_markdown_into_editor(
+    editor_session: Signal<EditorSession>,
+    active_frontmatter: Signal<Option<String>>,
+    full_markdown: &str,
+) {
+    let (fm, body) = split_frontmatter(full_markdown);
+    active_frontmatter.set(fm);
+    editor_session.with_untracked(|s| {
+        s.update_state(build_markdown_state(&body));
+    });
+}
+
 /// Sync the serialized Markdown from `editor_session` into `draft_content` and active sub-file.
 fn sync_editor_to_draft(
     editor_session: Signal<EditorSession>,
+    active_frontmatter: Signal<Option<String>>,
+    saved_file_snapshot: Signal<String>,
+    is_dirty: Signal<bool>,
     draft_content: Signal<String>,
     draft_files: Signal<Vec<SubFileEntry>>,
     active_file_idx: Signal<usize>,
 ) {
-    if let Some(val) = editor_session.with_untracked(serialize_session_markdown) {
-        draft_content.set(val.clone());
+    if let Some(body) = editor_session.with_untracked(serialize_session_markdown) {
+        let full =
+            active_frontmatter.with_untracked(|fm| combine_frontmatter(fm.as_deref(), &body));
+        is_dirty.set(full != saved_file_snapshot.get_untracked());
+        draft_content.set(full.clone());
         let idx = active_file_idx.get_untracked();
         draft_files.update(|list| {
             if let Some(slot) = list.get_mut(idx) {
-                slot.content = val;
+                slot.content = full;
             }
         });
     }
@@ -994,8 +1359,12 @@ impl ToolbarAction {
 }
 
 /// Render the Markdown formatting toolbar docked at the top of the editor card.
+#[allow(clippy::too_many_arguments)]
 fn markdown_toolbar(
     editor_session: Signal<EditorSession>,
+    active_frontmatter: Signal<Option<String>>,
+    saved_file_snapshot: Signal<String>,
+    is_dirty: Signal<bool>,
     draft_content: Signal<String>,
     draft_files: Signal<Vec<SubFileEntry>>,
     active_file_idx: Signal<usize>,
@@ -1004,6 +1373,9 @@ fn markdown_toolbar(
 ) -> impl IntoElement {
     let ctx = ToolbarCtx {
         editor_session,
+        active_frontmatter,
+        saved_file_snapshot,
+        is_dirty,
         draft_content,
         draft_files,
         active_file_idx,
@@ -1112,6 +1484,9 @@ fn markdown_toolbar(
 #[derive(Clone, Copy)]
 struct ToolbarCtx {
     editor_session: Signal<EditorSession>,
+    active_frontmatter: Signal<Option<String>>,
+    saved_file_snapshot: Signal<String>,
+    is_dirty: Signal<bool>,
     draft_content: Signal<String>,
     draft_files: Signal<Vec<SubFileEntry>>,
     active_file_idx: Signal<usize>,
@@ -1130,6 +1505,9 @@ fn toolbar_btn(
     ctx: &ToolbarCtx,
 ) -> impl IntoElement {
     let editor_session = ctx.editor_session;
+    let active_frontmatter = ctx.active_frontmatter;
+    let saved_file_snapshot = ctx.saved_file_snapshot;
+    let is_dirty = ctx.is_dirty;
     let draft_content = ctx.draft_content;
     let draft_files = ctx.draft_files;
     let active_file_idx = ctx.active_file_idx;
@@ -1189,7 +1567,15 @@ fn toolbar_btn(
                     session.focus();
                 }
             });
-            sync_editor_to_draft(editor_session, draft_content, draft_files, active_file_idx);
+            sync_editor_to_draft(
+                editor_session,
+                active_frontmatter,
+                saved_file_snapshot,
+                is_dirty,
+                draft_content,
+                draft_files,
+                active_file_idx,
+            );
             toolbar_rev.update(|v| *v = v.wrapping_add(1));
         })
         .child(label_el)
@@ -1307,4 +1693,36 @@ fn type_chip(
                 })
                 .text_xs(),
         )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn frontmatter_survives_rich_editor_round_trip() {
+        let src = "---\r\nname: ccomments\r\ndescription: demo skill\r\n---\r\n\r\n# 标题\r\n\r\n正文内容。\r\n";
+        let (fm, body) = split_frontmatter(src);
+        assert!(fm.is_some(), "expected YAML frontmatter to be preserved");
+        assert!(body.contains("# 标题"));
+
+        let session = EditorSession::new(build_markdown_state(&body), NodeViews::new());
+        let serialized_body =
+            serialize_session_markdown(&session).expect("markdown serialization should succeed");
+        let combined = combine_frontmatter(fm.as_deref(), &serialized_body);
+
+        let parsed = domain::skill::parse_skill_frontmatter(&combined)
+            .expect("recombined SKILL.md must keep valid YAML frontmatter");
+        assert_eq!(parsed.0, "ccomments");
+        assert_eq!(parsed.1, "demo skill");
+        assert!(combined.contains("正文内容"));
+    }
+
+    #[test]
+    fn plain_markdown_without_frontmatter_unchanged() {
+        let src = "# Hello\n\nWorld";
+        let (fm, body) = split_frontmatter(src);
+        assert!(fm.is_none());
+        assert_eq!(combine_frontmatter(fm.as_deref(), &body), src);
+    }
 }

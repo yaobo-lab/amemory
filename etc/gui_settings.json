@@ -17,13 +17,20 @@
   "global_summon_hotkey": "Alt+Space",
   "show_stats_overview": true,
   "auto_watch_catalog": true,
-  "favorite_ids": [],
+  "favorite_ids": [
+    "skill:ccomments",
+    "skill:check-c-arch",
+    "skill:dev-joke"
+  ],
   "custom_tags": {
     "skill:baby-name": [
       "skill:baby-name"
     ],
     "skill:ccomments": [
       "skill:ccomments"
+    ],
+    "skill:embedded-layer-architecture": [
+      "skill:embedded-layer-architecture"
     ],
     "skill:wirtec": [
       "skill:wirtec"
@@ -32,7 +39,8 @@
   "user_tags": [
     "skill:ccomments",
     "skill:wirtec",
-    "skill:baby-name"
+    "skill:baby-name",
+    "skill:embedded-layer-architecture"
   ],
   "visible_kinds": [
     "skill",

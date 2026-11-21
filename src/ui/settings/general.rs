@@ -4,10 +4,9 @@ use nsh_core::prelude::*;
 
 use super::{setting_row_tr, settings_group_reactive};
 use crate::core::i18n_keys::I18nKey;
-use crate::core::settings::{CardHeightMode, ThemeMode, WindowPositionMode};
+use crate::core::settings::{ThemeMode, WindowPositionMode};
 use crate::platform::window_frame::{DEFAULT_WINDOW_H, DEFAULT_WINDOW_W};
 use crate::state::app::AppStore;
-use crate::ui::components::slider::stepped_slider;
 use crate::ui::components::toggle::render_store_toggle;
 use crate::ui::theme::ClippiTheme;
 
@@ -83,47 +82,6 @@ pub fn render_general_tab(store: AppStore, _theme: ClippiTheme) -> impl IntoElem
                         .child(lang_btn("en", I18nKey::LangEn, store)),
                     store,
                 ),
-                // 4. Font / UI Scale Slider
-                setting_row_tr(
-                    move || store.tr(I18nKey::FontScale).to_string(),
-                    Some(move || store.tr(I18nKey::FontScaleDesc).to_string()),
-                    stepped_slider(
-                        0.8,
-                        1.4,
-                        0.1,
-                        settings.get_untracked().font_scale,
-                        store,
-                        move |val| {
-                            store.update_settings(|s| s.font_scale = val);
-                            store.show_toast(format!("已调整界面缩放: {:.0}%", val * 100.0));
-                        },
-                    ),
-                    store,
-                ),
-                // 5. Card Height Mode
-                setting_row_tr(
-                    move || store.tr(I18nKey::CardHeightMode).to_string(),
-                    Some(move || store.tr(I18nKey::CardHeightDesc).to_string()),
-                    view()
-                        .flex_row()
-                        .gap(px(4.0))
-                        .child(card_height_btn(
-                            CardHeightMode::Compact,
-                            I18nKey::CardHeightCompact,
-                            store,
-                        ))
-                        .child(card_height_btn(
-                            CardHeightMode::Standard,
-                            I18nKey::CardHeightStandard,
-                            store,
-                        ))
-                        .child(card_height_btn(
-                            CardHeightMode::Comfort,
-                            I18nKey::CardHeightComfort,
-                            store,
-                        )),
-                    store,
-                ),
             ],
         ))
         // ── Group 2: Window & Behavior ──
@@ -131,18 +89,13 @@ pub fn render_general_tab(store: AppStore, _theme: ClippiTheme) -> impl IntoElem
             move || store.tr(I18nKey::WindowBehaviorGroup).to_string(),
             store,
             vec![
-                // 6. Window Position Mode
+                // 4. Window Position Mode
                 setting_row_tr(
                     move || store.tr(I18nKey::WindowPositionMode).to_string(),
                     Some(move || store.tr(I18nKey::WindowPosDesc).to_string()),
                     view()
                         .flex_row()
                         .gap(px(4.0))
-                        .child(pos_btn(
-                            WindowPositionMode::FollowMouse,
-                            I18nKey::PosFollowMouse,
-                            store,
-                        ))
                         .child(pos_btn(
                             WindowPositionMode::Center,
                             I18nKey::PosCenter,
@@ -291,37 +244,6 @@ fn lang_btn(lang_code: &'static str, key: I18nKey, store: AppStore) -> impl Into
             text(move || store.tr(key))
                 .text_color(move || {
                     if settings.get().language == lang_code {
-                        rgb(0xffffff)
-                    } else {
-                        store.theme().text_2
-                    }
-                })
-                .text_xs(),
-        )
-}
-
-fn card_height_btn(mode: CardHeightMode, key: I18nKey, store: AppStore) -> impl IntoElement {
-    let settings = store.settings;
-    view()
-        .px(px(8.0))
-        .py(px(3.0))
-        .rounded(px(4.0))
-        .bg(move || {
-            if settings.get().card_height_mode == mode {
-                store.theme().accent
-            } else {
-                store.theme().divider
-            }
-        })
-        .cursor_pointer()
-        .on_press(move || {
-            store.update_settings(|s| s.card_height_mode = mode);
-            store.show_toast(format!("已切换卡片高度: {}", key.text()));
-        })
-        .child(
-            text(move || store.tr(key))
-                .text_color(move || {
-                    if settings.get().card_height_mode == mode {
                         rgb(0xffffff)
                     } else {
                         store.theme().text_2

@@ -73,7 +73,7 @@ pub fn render_xerj_tab(
                                 .cursor_pointer()
                                 .on_press(move || {
                                     let path = PathBuf::from(xerj_data_dir.get());
-                                    crate::services::amemory_runtime::open_path_in_explorer(&path);
+                                    crate::services::runtime::open_path_in_explorer(&path);
                                 })
                                 .child(
                                     text(glyphs::FOLDER)

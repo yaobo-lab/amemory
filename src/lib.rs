@@ -117,7 +117,7 @@ pub async fn run(config: AppConfig) -> Result<()> {
             .await
         }
         ServerMode::Gui => {
-            let rt = Arc::new(services::amemory_runtime::AmemoryRuntime::with_components(
+            let rt = Arc::new(services::runtime::AmemoryRuntime::with_components(
                 Arc::new(config.clone()),
                 adapter.clone(),
                 Arc::new(skills_catalog),

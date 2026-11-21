@@ -88,9 +88,9 @@ pub fn render_data_logger_tab(store: AppStore, theme: ClippiTheme) -> impl IntoE
                                 .cursor_pointer()
                                 .on_press(move || {
                                     let dir = log_dir.get();
-                                    crate::services::amemory_runtime::open_path_in_explorer(
-                                        Path::new(&dir),
-                                    );
+                                    crate::services::runtime::open_path_in_explorer(Path::new(
+                                        &dir,
+                                    ));
                                 })
                                 .child(
                                     text(glyphs::FOLDER)

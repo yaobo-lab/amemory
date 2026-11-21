@@ -12,7 +12,7 @@ use xcat_mcp::{
     AmemoryToolProvider, HttpMcpConfig, UnifiedMcpServer, XerjToolProvider, serve_http,
 };
 
-use super::amemory_runtime::AmemoryRuntime;
+use super::runtime::AmemoryRuntime;
 
 /// Controller managing the background MCP HTTP server runtime.
 pub struct McpController {
